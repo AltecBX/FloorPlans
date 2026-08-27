@@ -2,6 +2,20 @@
 
 _Last updated: 2026-08-27_
 
+## Output validation (done in CI environment)
+
+- `swift run GenerateSamplePlan <dir>` (SwiftPM snippet in the core package)
+  emits the sample apartment's SVG/DXF/CSV/JSON/.fieldplan artifacts.
+- The generated SVG plans (existing + demolition modes) were rendered in
+  headless Chromium and visually inspected: poché walls with corner closure,
+  window/door/opening symbols with swings, exterior dimension chains with
+  extension lines and ticks, fitted room labels with areas, red-dashed
+  demolition styling, scale bar and north arrow.
+- The generated DXF was parsed with **ezdxf**: AC1009 recognized, all
+  FieldPlan layers present (WALLS/DOORS/WINDOWS/DIMENSIONS/TEXT/FIXTURES/
+  DEMOLITION/NEW_CONSTRUCTION/SYMBOLS), 273 entities on correct layers,
+  inch-scaled extents and dimension texts verified.
+
 ## Environment note
 
 This codebase was authored in a Linux cloud environment (Swift 6.2.1

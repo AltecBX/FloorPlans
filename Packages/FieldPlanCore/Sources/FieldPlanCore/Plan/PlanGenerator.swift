@@ -133,19 +133,37 @@ public enum PlanGenerator {
                 guard includeElement(room.changeStatus, mode: mode) else { continue }
                 guard room.polygon.count >= 3 else { continue }
                 let at = room.labelPoint
+                let name = room.name.uppercased()
+
+                // Fit the label to the room: shrink until the estimated text
+                // width fits, and drop the area line (then the whole label)
+                // for rooms too small to carry it. ~0.62 × height per glyph
+                // approximates the system font's average advance.
+                let bounds = room.bounds
+                let maxWidth = max(bounds.width, 0.1) * 0.9
+                var height = options.labelTextHeight
+                let estimated = Double(max(name.count, 1)) * height * 0.62
+                if estimated > maxWidth {
+                    height = maxWidth / (Double(max(name.count, 1)) * 0.62)
+                }
+                guard height >= 0.07 else { continue }
+                let showArea = options.showAreaLabels
+                    && height >= 0.11
+                    && bounds.height > height * 4
+
                 add(.text(
-                    string: room.name.uppercased(),
-                    position: Vec2(at.x, at.y + (options.showAreaLabels ? options.labelTextHeight * 0.75 : 0)),
-                    height: options.labelTextHeight,
+                    string: name,
+                    position: Vec2(at.x, at.y + (showArea ? height * 0.75 : 0)),
+                    height: height,
                     rotation: 0,
                     anchor: .center,
                     pen: .roomLabel
                 ), to: .labels)
-                if options.showAreaLabels {
+                if showArea {
                     add(.text(
                         string: options.formatter.area(room.floorArea),
-                        position: Vec2(at.x, at.y - options.labelTextHeight * 0.75),
-                        height: options.labelTextHeight * 0.7,
+                        position: Vec2(at.x, at.y - height * 0.75),
+                        height: height * 0.7,
                         rotation: 0,
                         anchor: .center,
                         pen: .areaLabel
@@ -373,8 +391,10 @@ public enum PlanGenerator {
         case .column:
             emit(.polygon(points: corners, fill: .wallPoche, outline: pen))
         case .refrigerator:
-            emit(.line(a: local(-w * 0.35, d * 0.5), b: local(0, -d * 0.3), pen: pen))
-            emit(.line(a: local(w * 0.35, d * 0.5), b: local(0, -d * 0.3), pen: pen))
+            emit(.polygon(points: [
+                local(-w * 0.35, -d * 0.35), local(w * 0.35, -d * 0.35),
+                local(w * 0.35, d * 0.35), local(-w * 0.35, d * 0.35),
+            ], fill: .none, outline: pen))
         default:
             break
         }
@@ -396,18 +416,28 @@ public enum PlanGenerator {
             let probeDistance = wall.thickness / 2 + 0.25
             let positiveProbe = wall.midpoint + perp * probeDistance
             let negativeProbe = wall.midpoint - perp * probeDistance
-            let positiveInside = level.rooms.contains { GeometryOps.polygonContains($0.polygon, positiveProbe) }
-            let negativeInside = level.rooms.contains { GeometryOps.polygonContains($0.polygon, negativeProbe) }
+            let positiveRoom = level.rooms.first { GeometryOps.polygonContains($0.polygon, positiveProbe) }
+            let negativeRoom = level.rooms.first { GeometryOps.polygonContains($0.polygon, negativeProbe) }
+            // Short interior partitions (rooms on both sides) add clutter and
+            // collide with room labels; their lengths remain one tap away.
+            let isInterior = positiveRoom != nil && negativeRoom != nil
+            if isInterior && wall.length < 1.0 { continue }
             let side: Double
-            if positiveInside && !negativeInside {
-                side = -1
-            } else if negativeInside && !positiveInside {
+            if positiveRoom != nil && negativeRoom == nil {
+                side = -1 // dimension on the exterior side
+            } else if negativeRoom != nil && positiveRoom == nil {
                 side = 1
+            } else if let p = positiveRoom, let n = negativeRoom {
+                // Interior partition: put the dimension in the LARGER room,
+                // where it is least likely to collide with labels/fixtures.
+                side = p.floorArea >= n.floorArea ? 1 : -1
             } else {
                 side = 1
             }
 
-            let offset = (wall.thickness / 2 + options.dimensionOffset) * side
+            let offsetMagnitude = wall.thickness / 2
+                + options.dimensionOffset * (isInterior ? 0.62 : 1.0)
+            let offset = offsetMagnitude * side
             let a = wall.start + perp * offset
             let b = wall.end + perp * offset
             let text = options.formatter.length(wall.length)
