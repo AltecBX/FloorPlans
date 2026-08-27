@@ -1,0 +1,425 @@
+import Foundation
+
+// MARK: - Scan bridging DTOs
+//
+// The iOS app converts RoomPlan's CapturedRoom/CapturedStructure into these
+// plain value types (a mechanical, few-line mapping), and ALL conversion
+// logic lives here where it is unit-testable without ARKit. RoomPlan is an
+// input source — never the data architecture (spec §11).
+
+public enum ScannedSurfaceKind: String, Codable, Sendable {
+    case wall, door, window, opening, floor
+}
+
+/// A planar surface from a scan, in world space (meters, +Y up).
+public struct ScannedSurfaceDTO: Codable, Hashable, Identifiable, Sendable {
+    public var id: UUID
+    public var kind: ScannedSurfaceKind
+    /// Surface center in world space.
+    public var center: Vec3
+    /// World direction of the surface's local X axis (its width direction).
+    public var xAxis: Vec3
+    /// dimensions: width along xAxis, height along world Y.
+    public var width: Double
+    public var height: Double
+    public var thickness: Double?
+    /// Non-rectangular outline in world space when the scanner provides one.
+    public var polygonCorners: [Vec3]
+    /// 0 = low, 1 = medium, 2 = high.
+    public var confidenceLevel: Int
+    /// Identifier of the wall hosting this door/window/opening.
+    public var parentID: UUID?
+    /// Doors only: whether the scanner saw the door open.
+    public var isDoorOpen: Bool?
+
+    public init(
+        id: UUID = UUID(),
+        kind: ScannedSurfaceKind,
+        center: Vec3,
+        xAxis: Vec3,
+        width: Double,
+        height: Double,
+        thickness: Double? = nil,
+        polygonCorners: [Vec3] = [],
+        confidenceLevel: Int = 1,
+        parentID: UUID? = nil,
+        isDoorOpen: Bool? = nil
+    ) {
+        self.id = id
+        self.kind = kind
+        self.center = center
+        self.xAxis = xAxis
+        self.width = width
+        self.height = height
+        self.thickness = thickness
+        self.polygonCorners = polygonCorners
+        self.confidenceLevel = confidenceLevel
+        self.parentID = parentID
+        self.isDoorOpen = isDoorOpen
+    }
+
+    public var captureConfidence: CaptureConfidence {
+        switch confidenceLevel {
+        case 2: return .high
+        case 1: return .medium
+        default: return .low
+        }
+    }
+}
+
+/// A recognized object (furniture, appliance, fixture) in world space.
+public struct ScannedObjectDTO: Codable, Hashable, Identifiable, Sendable {
+    public var id: UUID
+    /// RoomPlan category raw name, e.g. "bathtub", "refrigerator", "sofa".
+    public var categoryName: String
+    public var center: Vec3
+    public var xAxis: Vec3
+    /// Full extents: width (x), height (y), depth (z).
+    public var dimensions: Vec3
+    public var confidenceLevel: Int
+
+    public init(
+        id: UUID = UUID(),
+        categoryName: String,
+        center: Vec3,
+        xAxis: Vec3,
+        dimensions: Vec3,
+        confidenceLevel: Int = 1
+    ) {
+        self.id = id
+        self.categoryName = categoryName
+        self.center = center
+        self.xAxis = xAxis
+        self.dimensions = dimensions
+        self.confidenceLevel = confidenceLevel
+    }
+}
+
+/// One captured room: surfaces + objects, in a shared world space.
+public struct ScannedRoomDTO: Codable, Hashable, Identifiable, Sendable {
+    public var id: UUID
+    public var suggestedName: String?
+    public var suggestedType: String?
+    public var surfaces: [ScannedSurfaceDTO]
+    public var objects: [ScannedObjectDTO]
+    public var capturedAt: Date
+
+    public init(
+        id: UUID = UUID(),
+        suggestedName: String? = nil,
+        suggestedType: String? = nil,
+        surfaces: [ScannedSurfaceDTO] = [],
+        objects: [ScannedObjectDTO] = [],
+        capturedAt: Date = Date()
+    ) {
+        self.id = id
+        self.suggestedName = suggestedName
+        self.suggestedType = suggestedType
+        self.surfaces = surfaces
+        self.objects = objects
+        self.capturedAt = capturedAt
+    }
+}
+
+// MARK: - Conversion
+
+public enum ScanConversion {
+
+    /// Maps a RoomPlan object category raw name to a fixture category.
+    public static func fixtureCategory(forObjectNamed name: String) -> FixtureCategory {
+        switch name.lowercased() {
+        case "bathtub": return .bathtub
+        case "toilet": return .toilet
+        case "sink": return .sink
+        case "shower": return .shower
+        case "refrigerator": return .refrigerator
+        case "stove": return .stove
+        case "oven": return .oven
+        case "dishwasher": return .dishwasher
+        case "washerdryer": return .washerDryer
+        case "fireplace": return .fireplace
+        case "stairs": return .stairs
+        case "bed": return .bed
+        case "sofa": return .sofa
+        case "chair": return .chair
+        case "table": return .table
+        case "storage": return .storage
+        case "television": return .television
+        default: return .custom
+        }
+    }
+
+    public static func roomType(forSuggestion suggestion: String?) -> RoomType {
+        guard let s = suggestion?.lowercased() else { return .other }
+        if s.contains("living") { return .livingRoom }
+        if s.contains("dining") { return .diningRoom }
+        if s.contains("kitchen") { return .kitchen }
+        if s.contains("bath") { return .bathroom }
+        if s.contains("bed") { return .bedroom }
+        if s.contains("office") { return .office }
+        if s.contains("laundry") { return .laundry }
+        if s.contains("closet") { return .closet }
+        if s.contains("hall") { return .hallway }
+        if s.contains("garage") { return .garage }
+        if s.contains("stair") { return .stairHall }
+        return .other
+    }
+
+    /// Result of converting one or more scanned rooms into canonical geometry.
+    public struct ConversionResult: Sendable {
+        public var rooms: [RoomShape] = []
+        public var walls: [Wall] = []
+        public var fixtures: [FixtureItem] = []
+        /// Non-fatal notes about what could not be converted cleanly.
+        public var warnings: [String] = []
+    }
+
+    /// Converts scanned rooms (single scan or a merged multiroom structure)
+    /// into canonical walls, rooms and fixtures in plan coordinates.
+    ///
+    /// Walls duplicated across rooms (shared partitions captured once per
+    /// room) are deduplicated; both rooms then reference the surviving wall.
+    public static func convert(rooms scannedRooms: [ScannedRoomDTO]) -> ConversionResult {
+        var result = ConversionResult()
+
+        for scanned in scannedRooms {
+            let wallSurfaces = scanned.surfaces.filter { $0.kind == .wall }
+            let floorSurfaces = scanned.surfaces.filter { $0.kind == .floor }
+            let openingSurfaces = scanned.surfaces.filter {
+                $0.kind == .door || $0.kind == .window || $0.kind == .opening
+            }
+
+            // Floor elevation: bottom of the walls (world Y).
+            let floorY: Double = {
+                if let f = floorSurfaces.first { return f.center.y }
+                let bottoms = wallSurfaces.map { $0.center.y - $0.height / 2 }
+                return bottoms.min() ?? 0
+            }()
+
+            // Convert walls.
+            var roomWalls: [Wall] = []
+            for surface in wallSurfaces {
+                guard surface.width > 0.02 else { continue }
+                let axisPlan = planDirection(surface.xAxis)
+                guard axisPlan.length > 0.5 else {
+                    result.warnings.append("Skipped a wall with a vertical width axis.")
+                    continue
+                }
+                let centerPlan = surface.center.planProjection
+                let half = axisPlan * (surface.width / 2)
+                let wall = Wall(
+                    id: surface.id,
+                    start: centerPlan - half,
+                    end: centerPlan + half,
+                    height: max(surface.height, 0.1),
+                    thickness: surface.thickness ?? 0.1143,
+                    openings: [],
+                    changeStatus: .existing,
+                    source: .lidarScanned,
+                    confidence: surface.captureConfidence,
+                    sourceScanID: scanned.id
+                )
+                roomWalls.append(wall)
+            }
+
+            // Attach doors/windows/openings to their host walls.
+            for surface in openingSurfaces {
+                let kind: OpeningKind = {
+                    switch surface.kind {
+                    case .door: return .door
+                    case .window: return .window
+                    default: return .opening
+                    }
+                }()
+
+                // Host wall: explicit parent first, else nearest wall line.
+                var hostIndex: Int? = nil
+                if let parentID = surface.parentID {
+                    hostIndex = roomWalls.firstIndex { $0.id == parentID }
+                }
+                let openingPlanCenter = surface.center.planProjection
+                if hostIndex == nil {
+                    var bestDist = 0.5
+                    for (i, wall) in roomWalls.enumerated() {
+                        let d = GeometryOps.distanceToSegment(openingPlanCenter, wall.start, wall.end)
+                        if d < bestDist {
+                            bestDist = d
+                            hostIndex = i
+                        }
+                    }
+                }
+                guard let host = hostIndex else {
+                    result.warnings.append("A \(kind.displayName.lowercased()) could not be matched to a wall.")
+                    continue
+                }
+
+                let wall = roomWalls[host]
+                let along = (openingPlanCenter - wall.start).dot(wall.direction)
+                let sill = kind == .window
+                    ? max(0, (surface.center.y - surface.height / 2) - floorY)
+                    : 0
+                let opening = WallOpening(
+                    id: surface.id,
+                    kind: kind,
+                    centerOffset: min(max(along, surface.width / 2), max(surface.width / 2, wall.length - surface.width / 2)),
+                    width: min(surface.width, wall.length),
+                    height: surface.height,
+                    sillHeight: sill,
+                    swing: kind == .door ? DoorSwing() : nil,
+                    changeStatus: .existing,
+                    source: .lidarScanned,
+                    confidence: surface.captureConfidence
+                )
+                roomWalls[host].openings.append(opening)
+                roomWalls[host].openings.sort { $0.centerOffset < $1.centerOffset }
+            }
+
+            // Room polygon: floor outline when available, else the wall loop.
+            var polygon: [Vec2] = []
+            if let floor = floorSurfaces.first, floor.polygonCorners.count >= 3 {
+                polygon = GeometryOps.counterClockwise(
+                    GeometryOps.simplified(floor.polygonCorners.map(\.planProjection))
+                )
+            }
+            if polygon.count < 3 {
+                polygon = GeometryCleaner.loopPolygon(from: roomWalls, tolerance: 0.35) ?? []
+            }
+            if polygon.count < 3, !roomWalls.isEmpty {
+                result.warnings.append("Room boundary for \(scanned.suggestedName ?? "a scanned room") did not close; review in the editor.")
+            }
+
+            // Ceiling height from wall heights (median resists outliers).
+            let heights = roomWalls.map(\.height).sorted()
+            let ceiling = heights.isEmpty ? nil : heights[heights.count / 2]
+
+            let room = RoomShape(
+                id: scanned.id,
+                name: scanned.suggestedName ?? "Room \(result.rooms.count + 1)",
+                type: roomType(forSuggestion: scanned.suggestedType),
+                polygon: polygon,
+                ceilingHeight: ceiling,
+                ceilingHeightSource: .lidarScanned,
+                wallIDs: roomWalls.map(\.id),
+                sourceScanID: scanned.id,
+                changeStatus: .existing
+            )
+            result.rooms.append(room)
+            result.walls.append(contentsOf: roomWalls)
+
+            // Objects → fixtures.
+            for object in scanned.objects {
+                let axisPlan = planDirection(object.xAxis)
+                let rotation = axisPlan.length > 0.5 ? axisPlan.angle : 0
+                let fixture = FixtureItem(
+                    id: object.id,
+                    category: fixtureCategory(forObjectNamed: object.categoryName),
+                    label: nil,
+                    center: object.center.planProjection,
+                    size: Vec2(max(object.dimensions.x, 0.05), max(object.dimensions.z, 0.05)),
+                    rotation: rotation,
+                    height: object.dimensions.y,
+                    roomID: polygon.count >= 3 && GeometryOps.polygonContains(polygon, object.center.planProjection)
+                        ? room.id : nil,
+                    changeStatus: .existing,
+                    source: .lidarScanned,
+                    confidence: object.confidenceLevel >= 2 ? .high : (object.confidenceLevel == 1 ? .medium : .low)
+                )
+                result.fixtures.append(fixture)
+            }
+        }
+
+        // Deduplicate shared partition walls captured once per room.
+        result = dedupeSharedWalls(result)
+        return result
+    }
+
+    /// Merges a conversion result into an existing level, keeping previously
+    /// captured rooms. Rooms re-scanned (same scan ID) are replaced.
+    public static func merge(_ conversion: ConversionResult, into level: LevelGeometry) -> LevelGeometry {
+        var result = level
+        let newRoomIDs = Set(conversion.rooms.map(\.id))
+        // Drop replaced rooms and their walls/fixtures.
+        let replacedWallIDs = Set(result.rooms.filter { newRoomIDs.contains($0.id) }.flatMap(\.wallIDs))
+        result.rooms.removeAll { newRoomIDs.contains($0.id) }
+        result.walls.removeAll { replacedWallIDs.contains($0.id) }
+        let newFixtureRoomIDs = newRoomIDs
+        result.fixtures.removeAll { f in
+            guard let rid = f.roomID else { return false }
+            return newFixtureRoomIDs.contains(rid) && f.source == .lidarScanned
+        }
+        result.rooms.append(contentsOf: conversion.rooms)
+        result.walls.append(contentsOf: conversion.walls)
+        result.fixtures.append(contentsOf: conversion.fixtures)
+        return result
+    }
+
+    // MARK: - Internals
+
+    /// Projects a world direction onto the plan plane (drops Y, flips Z).
+    static func planDirection(_ v: Vec3) -> Vec2 {
+        Vec2(v.x, -v.z).normalized
+    }
+
+    /// Removes duplicate walls that occupy the same span (partitions captured
+    /// from both sides). The higher-confidence wall survives; openings from
+    /// both are merged onto it and room references are rewritten.
+    static func dedupeSharedWalls(_ input: ConversionResult) -> ConversionResult {
+        var result = input
+        var removed: [UUID: UUID] = [:] // removed wall ID -> surviving wall ID
+        var walls = result.walls
+
+        var i = 0
+        while i < walls.count {
+            var j = i + 1
+            while j < walls.count {
+                let a = walls[i]
+                let b = walls[j]
+                let sameSpan =
+                    (a.start.distance(to: b.start) < 0.15 && a.end.distance(to: b.end) < 0.15) ||
+                    (a.start.distance(to: b.end) < 0.15 && a.end.distance(to: b.start) < 0.15)
+                if sameSpan {
+                    // Keep the higher-confidence wall; merge openings.
+                    let keepFirst = confidenceRank(a.confidence) >= confidenceRank(b.confidence)
+                    let keep = keepFirst ? i : j
+                    let drop = keepFirst ? j : i
+                    var survivor = walls[keep]
+                    let dropped = walls[drop]
+                    for opening in dropped.openings {
+                        let world = dropped.point(atOffset: opening.centerOffset)
+                        let along = (world - survivor.start).dot(survivor.direction)
+                        let overlapsExisting = survivor.openings.contains { existing in
+                            abs(existing.centerOffset - along) < max(existing.width, opening.width) / 2
+                        }
+                        if !overlapsExisting {
+                            var moved = opening
+                            moved.centerOffset = min(max(along, moved.width / 2), max(moved.width / 2, survivor.length - moved.width / 2))
+                            survivor.openings.append(moved)
+                        }
+                    }
+                    survivor.openings.sort { $0.centerOffset < $1.centerOffset }
+                    removed[dropped.id] = survivor.id
+                    walls[keep] = survivor
+                    walls.remove(at: drop)
+                    if drop == i { i -= 1; break } else { continue }
+                }
+                j += 1
+            }
+            i += 1
+        }
+
+        // Rewrite room wall references to survivors.
+        for r in result.rooms.indices {
+            result.rooms[r].wallIDs = result.rooms[r].wallIDs.map { removed[$0] ?? $0 }
+        }
+        result.walls = walls
+        return result
+    }
+
+    private static func confidenceRank(_ c: CaptureConfidence) -> Int {
+        switch c {
+        case .low: return 0
+        case .medium: return 1
+        case .high: return 2
+        }
+    }
+}
