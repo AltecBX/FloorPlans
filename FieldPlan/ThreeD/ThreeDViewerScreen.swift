@@ -215,6 +215,10 @@ private struct SceneKitContainer: UIViewRepresentable {
         Coordinator(measureMode: measureMode, onSelect: onSelect, onMeasurePoint: onMeasurePoint)
     }
 
+    /// Main-actor isolated: UIKit delivers tap callbacks on the main thread,
+    /// and resolving a tapped element reads the main-actor `SettingsStore` for
+    /// the owner's unit formatting.
+    @MainActor
     final class Coordinator: NSObject {
         weak var view: SCNView?
         var measureMode: Bool
