@@ -186,6 +186,35 @@ enum ReportBuilder {
             ? [settings.companyName, settings.companyPhone].filter { !$0.isEmpty }.joined(separator: "  ·  ")
             : settings.reportFooter
 
+        // Which plan sheets this report contains, decided before drawing so the
+        // 3D views can be rendered up front.
+        let hasChanges = snapshot.levels.contains { level in
+            level.walls.contains { $0.changeStatus != .existing }
+                || level.fixtures.contains { $0.changeStatus != .existing }
+        }
+        var planSheets: [(mode: PlanRenderMode, title: String)] = []
+        if options.includeExistingPlan { planSheets.append((.existing, "Existing Conditions")) }
+        if options.includeProposedPlan && hasChanges { planSheets.append((.proposed, "Proposed Plan")) }
+        if options.includeDemolitionPlan && hasChanges { planSheets.append((.demolition, "Demolition Plan")) }
+
+        // Dollhouse snapshots are rendered here rather than inside the drawing
+        // callback: Metal work does not belong in a PDF context, and the
+        // renderer is main-actor isolated while the callback's local functions
+        // are not. The demolition sheet is 2D only.
+        var dollhouses: [PlanRenderMode: [UUID: UIImage]] = [:]
+        if options.include3D {
+            for sheet in planSheets where sheet.mode != .demolition {
+                var byLevel: [UUID: UIImage] = [:]
+                for level in snapshot.levels where !(level.walls.isEmpty && level.rooms.isEmpty) {
+                    if let image = ThreeDSnapshot.render(
+                        levels: [level], mode: sheet.mode, showFurniture: true) {
+                        byLevel[level.id] = image
+                    }
+                }
+                dollhouses[sheet.mode] = byLevel
+            }
+        }
+
         try renderer.writePDF(to: outputURL) { context in
             let composer = Composer(context: context, footerText: footer)
 
@@ -294,9 +323,7 @@ enum ReportBuilder {
                                       font: UIFont.systemFont(ofSize: 11, weight: .semibold))
                     }
 
-                    let threeD: UIImage? = (options.include3D && mode != .demolition)
-                        ? ThreeDSnapshot.render(levels: [level], mode: mode, showFurniture: true)
-                        : nil
+                    let threeD = dollhouses[mode]?[level.id]
 
                     let available = composer.bottomLimit - composer.cursor - 16
                     let planHeight = threeD != nil ? available * 0.55 : available
@@ -327,18 +354,8 @@ enum ReportBuilder {
                         font: Fonts.small, color: .gray)
                 }
             }
-            if options.includeExistingPlan {
-                planPages(mode: .existing, title: "Existing Conditions")
-            }
-            let hasChanges = snapshot.levels.contains { level in
-                level.walls.contains { $0.changeStatus != .existing }
-                    || level.fixtures.contains { $0.changeStatus != .existing }
-            }
-            if options.includeProposedPlan && hasChanges {
-                planPages(mode: .proposed, title: "Proposed Plan")
-            }
-            if options.includeDemolitionPlan && hasChanges {
-                planPages(mode: .demolition, title: "Demolition Plan")
+            for sheet in planSheets {
+                planPages(mode: sheet.mode, title: sheet.title)
             }
 
             // ---- Room schedule ----

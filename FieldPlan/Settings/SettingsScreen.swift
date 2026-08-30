@@ -16,7 +16,7 @@ struct SettingsScreen: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Measurement Display") {
+                Section {
                     Picker("Units", selection: Binding(
                         get: { settings.unitSystem },
                         set: { settings.unitSystem = $0 })) {
@@ -30,6 +30,8 @@ struct SettingsScreen: View {
                         }
                     }
                     LabeledContent("Example", value: settings.formatter.length(3.8465))
+                } header: {
+                    Text("Measurement Display")
                 } footer: {
                     Text("Display rounding only — stored geometry always keeps full precision.")
                 }
@@ -95,7 +97,7 @@ struct SettingsScreen: View {
                         .lineLimit(3...6)
                 }
 
-                Section("Sample Data") {
+                Section {
                     Button {
                         loadSample()
                     } label: {
@@ -106,6 +108,8 @@ struct SettingsScreen: View {
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
+                } header: {
+                    Text("Sample Data")
                 } footer: {
                     Text("Creates a clearly-labeled sample one-bedroom apartment so you can explore plans, takeoff and reports without scanning. Sample geometry is never mixed with field measurements.")
                 }

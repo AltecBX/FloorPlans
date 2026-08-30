@@ -80,10 +80,12 @@ struct ExportScreen: View {
                 }
             }
 
-            Section("Complete Project") {
+            Section {
                 exportButton(".fieldplan Package (backup / transfer)", icon: "shippingbox") {
                     try ProjectStore.shared.exportPackage(project)
                 }
+            } header: {
+                Text("Complete Project")
             } footer: {
                 Text("The .fieldplan package contains the full project — geometry, all plan versions, measurements, photos and raw scans — and can be re-imported from the Projects screen.")
             }
