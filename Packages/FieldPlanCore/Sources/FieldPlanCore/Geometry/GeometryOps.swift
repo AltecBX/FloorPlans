@@ -195,6 +195,20 @@ public enum GeometryOps {
     /// longest edge — the "11' 5\" × 12' 0\"" figures shown under room names.
     /// Returns (extent along the longest edge, perpendicular extent).
     public static func orientedDimensions(_ polygon: [Vec2]) -> (width: Double, depth: Double)? {
+        guard let extents = orientedExtents(polygon) else { return nil }
+        return (extents.width, extents.depth)
+    }
+
+    /// The oriented bounding box plus `fill`: how much of that box the polygon
+    /// actually occupies (1.0 for a true rectangle, 0.75 for an L-shape missing
+    /// a quarter).
+    ///
+    /// Callers use `fill` to decide whether "W × D" honestly describes a room.
+    /// For an irregular room the same two numbers are *overall extents* only —
+    /// multiplying them would overstate the area — so they must be labelled as
+    /// such or omitted (spec §17: never present a measurement that implies more
+    /// than the geometry supports).
+    public static func orientedExtents(_ polygon: [Vec2]) -> (width: Double, depth: Double, fill: Double)? {
         let n = polygon.count
         guard n >= 3 else { return nil }
         var bestDir = Vec2(1, 0)
@@ -221,7 +235,11 @@ public enum GeometryOps {
             minV = Swift.min(minV, v)
             maxV = Swift.max(maxV, v)
         }
-        return (maxU - minU, maxV - minV)
+        let width = maxU - minU
+        let depth = maxV - minV
+        let boxArea = width * depth
+        let fill = boxArea > 1e-9 ? Swift.min(1.0, area(polygon) / boxArea) : 0
+        return (width, depth, fill)
     }
 
     /// True when any two non-adjacent edges of the polygon intersect.

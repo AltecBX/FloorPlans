@@ -332,11 +332,119 @@ final class AutoLabelingTests: XCTestCase {
     func testRoomDimensionLabelOnPlan() {
         let level = SampleFixtures.rectangularRoom(widthFeet: 12, depthFeet: 15, name: "Bedroom", type: .bedroom)
         let scene = PlanGenerator.scene(for: level)
-        let labelTexts: [String] = scene.layer(.labels)!.primitives.compactMap {
-            if case .text(let s, _, _, _, _, _) = $0 { return s }
+        let labels = texts(in: scene, layer: .labels)
+        XCTAssertTrue(labels.contains { $0.contains("×") }, "\(labels)")
+        XCTAssertTrue(labels.contains { $0.contains("15' 0\"") && $0.contains("12' 0\"") }, "\(labels)")
+        // A rectangle really is W × D, so it carries no qualifier.
+        XCTAssertFalse(labels.contains { $0.contains("overall") }, "\(labels)")
+    }
+
+    func testOrientedExtentsReportHowMuchOfTheBoxTheRoomFills() {
+        let rect = [Vec2(0, 0), Vec2(4, 0), Vec2(4, 3), Vec2(0, 3)]
+        XCTAssertEqual(GeometryOps.orientedExtents(rect)!.fill, 1.0, accuracy: 1e-9)
+        let rotated = rect.map { $0.rotated(by: .pi / 6) }
+        XCTAssertEqual(GeometryOps.orientedExtents(rotated)!.fill, 1.0, accuracy: 1e-6)
+
+        // L-shape: a 4×4 box with a 2×2 bite removed fills three quarters of it.
+        let ell = [Vec2(0, 0), Vec2(4, 0), Vec2(4, 2), Vec2(2, 2), Vec2(2, 4), Vec2(0, 4)]
+        let extents = GeometryOps.orientedExtents(ell)!
+        XCTAssertEqual(extents.width, 4, accuracy: 1e-9)
+        XCTAssertEqual(extents.depth, 4, accuracy: 1e-9)
+        XCTAssertEqual(extents.fill, 0.75, accuracy: 1e-9)
+    }
+
+    func testIrregularRoomDimensionsAreLabelledOverall() {
+        // The pentagon's bounding box is 14' × 14' = 196 sq ft but the room is
+        // only 178 sq ft. Printing a bare "14' × 14'" next to "178 sq ft" would
+        // invite the client to multiply and get a different answer, so the
+        // extents must be qualified.
+        let level = SampleFixtures.irregularRoom()
+        let labels = texts(in: PlanGenerator.scene(for: level), layer: .labels)
+        XCTAssertTrue(labels.contains { $0.contains("×") && $0.hasSuffix("overall") }, "\(labels)")
+        XCTAssertFalse(labels.contains { $0.contains("×") && !$0.hasSuffix("overall") }, "\(labels)")
+    }
+
+    func testRoomLabelLinesNeverExceedTheRoomWidth() {
+        // A narrow closet can hold its name but not a dimension string; the
+        // extra lines must be dropped rather than spill into the next room.
+        let level = SampleFixtures.rectangularRoom(widthFeet: 2.5, depthFeet: 6, name: "Closet", type: .closet)
+        let room = level.rooms[0]
+        let maxWidth = room.bounds.width * 0.82
+        for case .text(let string, _, let height, _, _, _) in PlanGenerator.scene(for: level).layer(.labels)!.primitives {
+            XCTAssertLessThanOrEqual(PlanTextMetrics.width(string, height: height), maxWidth + 1e-9, "\(string)")
+        }
+    }
+
+    func testTextMetricsTrackRealFontWidths() {
+        // Per-character widths measured in a browser from Helvetica/Arial at
+        // 100 pt. Layout decisions are only as good as these numbers, so they
+        // must stay within a few percent of what a renderer really draws.
+        let measured: [(String, Double)] = [
+            ("BATHROOM", 0.713), ("BEDROOM", 0.738), ("LIVING ROOM", 0.606),
+            ("HALLWAY", 0.656), ("KITCHEN", 0.627), ("CLOSET", 0.667),
+            ("5' 0\" × 6' 0\"", 0.386), ("30.0 sq ft", 0.411),
+            ("123 Main Street, Apt 4B, Brooklyn NY 11201", 0.469),
+            ("(555) 010-0100 · Lic. #123456", 0.464),
+        ]
+        for (text, perCharacter) in measured {
+            let actual = perCharacter * Double(text.count)
+            let estimate = PlanTextMetrics.units(text)
+            XCTAssertEqual(estimate, actual, accuracy: actual * 0.05, text)
+        }
+        XCTAssertNil(PlanTextMetrics.heightToFit("", maxWidth: 1))
+    }
+
+    // MARK: - Title block
+
+    func testTitleBlockSitsBelowThePlanAndCarriesTheSheetFacts() {
+        let level = SampleFixtures.rectangularRoom(widthFeet: 12, depthFeet: 15, name: "Bedroom", type: .bedroom)
+        var options = PlanGenerator.Options()
+        let plain = PlanGenerator.scene(for: level, options: options)
+
+        options.titleBlock = PlanTitleBlock(
+            projectName: "Maple Street Apartment",
+            address: "123 Main St, Apt 4B, Brooklyn NY",
+            planTitle: "Existing Conditions — Level 1",
+            totalArea: "180 sq ft",
+            dateText: "Aug 30, 2026",
+            preparedBy: "Jerry's Renovations",
+            contact: "(555) 010-0100")
+        let titled = PlanGenerator.scene(for: level, options: options)
+
+        // The block extends the sheet downward and never eats into the plan.
+        XCTAssertLessThan(titled.bounds.minY, plain.bounds.minY)
+        XCTAssertEqual(titled.bounds.maxY, plain.bounds.maxY, accuracy: 1e-9)
+        XCTAssertEqual(titled.bounds.minX, plain.bounds.minX, accuracy: 1e-9)
+        XCTAssertEqual(titled.bounds.maxX, plain.bounds.maxX, accuracy: 1e-9)
+
+        let decor = texts(in: titled, layer: .decor)
+        XCTAssertTrue(decor.contains("MAPLE STREET APARTMENT"), "\(decor)")
+        XCTAssertTrue(decor.contains("123 Main St, Apt 4B, Brooklyn NY"), "\(decor)")
+        XCTAssertTrue(decor.contains("180 sq ft"), "\(decor)")
+        XCTAssertTrue(decor.contains("Jerry's Renovations"), "\(decor)")
+        XCTAssertTrue(decor.contains("(555) 010-0100"), "\(decor)")
+
+        // Every block primitive stays below the plan geometry.
+        for case .text(_, let position, _, _, _, _) in titled.layer(.decor)!.primitives
+        where position.y < plain.bounds.minY {
+            XCTAssertGreaterThan(position.y, titled.bounds.minY)
+        }
+    }
+
+    func testEmptyTitleBlockChangesNothing() {
+        let level = SampleFixtures.rectangularRoom(widthFeet: 12, depthFeet: 15, name: "Bedroom", type: .bedroom)
+        var options = PlanGenerator.Options()
+        let plain = PlanGenerator.scene(for: level, options: options)
+        options.titleBlock = PlanTitleBlock(projectName: "   ")
+        let blank = PlanGenerator.scene(for: level, options: options)
+        XCTAssertEqual(blank.bounds.minY, plain.bounds.minY, accuracy: 1e-9)
+        XCTAssertEqual(texts(in: blank, layer: .decor), texts(in: plain, layer: .decor))
+    }
+
+    private func texts(in scene: PlanScene, layer: PlanLayerKind) -> [String] {
+        (scene.layer(layer)?.primitives ?? []).compactMap {
+            if case .text(let string, _, _, _, _, _) = $0 { return string }
             return nil
         }
-        XCTAssertTrue(labelTexts.contains { $0.contains("×") }, "\(labelTexts)")
-        XCTAssertTrue(labelTexts.contains { $0.contains("15' 0\"") && $0.contains("12' 0\"") }, "\(labelTexts)")
     }
 }

@@ -35,11 +35,23 @@ func write(_ text: String, _ name: String) throws {
 }
 
 // SVG — existing conditions and demolition plan.
+let stats = ProjectSummaryStats.compute(levels: [level])
+options.titleBlock = PlanTitleBlock(
+    projectName: "SAMPLE Apartment",
+    address: "123 Main Street, Apt 4B, Brooklyn NY 11201",
+    planTitle: "Existing Conditions — \(level.name)",
+    totalArea: formatter.area(stats.totalFloorArea),
+    dateText: "August 30, 2026",
+    preparedBy: "Jerry's Renovations",
+    contact: "(555) 010-0100  ·  Lic. #123456",
+    note: "SAMPLE DATA — not a field measurement")
+
 options.mode = .existing
 let existingScene = PlanGenerator.scene(for: level, options: options)
 try write(SVGExporter.svg(for: existingScene), "sample-existing.svg")
 
 options.mode = .demolition
+options.titleBlock?.planTitle = "Demolition Plan — \(level.name)"
 let demoScene = PlanGenerator.scene(for: level, options: options)
 try write(SVGExporter.svg(for: demoScene), "sample-demolition.svg")
 
@@ -62,7 +74,6 @@ try package.write(to: outputDir.appendingPathComponent("sample.fieldplan"), opti
 print("wrote \(outputDir.appendingPathComponent("sample.fieldplan").path)")
 
 // Sanity summary.
-let stats = ProjectSummaryStats.compute(levels: [level])
 print(String(format: "rooms: %d  floor: %@  QA findings: %d",
              stats.totalRooms,
              formatter.area(stats.totalFloorArea),

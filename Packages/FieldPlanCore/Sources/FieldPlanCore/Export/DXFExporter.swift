@@ -181,8 +181,19 @@ public enum DXFExporter {
             num(51, GeometryAngle.degrees(a1))
         }
 
-        func emitText(_ string: String, at position: Vec2, height: Double, rotation: Double, layer: Layer) {
+        func emitText(_ string: String, at position: Vec2, height: Double, rotation: Double,
+                      anchor: TextAnchor, layer: Layer) {
             guard !string.isEmpty else { return }
+            // R12 justification: 72 is horizontal (0 left, 1 center),
+            // 73 vertical (0 baseline, 1 bottom, 2 middle, 3 top).
+            let horizontal: String
+            let vertical: String
+            switch anchor {
+            case .center: (horizontal, vertical) = ("1", "2")
+            case .leftCenter: (horizontal, vertical) = ("0", "2")
+            case .bottomCenter: (horizontal, vertical) = ("1", "1")
+            case .topCenter: (horizontal, vertical) = ("1", "3")
+            }
             tag(0, "TEXT")
             tag(8, layer.rawValue)
             num(10, X(position))
@@ -191,11 +202,11 @@ public enum DXFExporter {
             num(40, height * k)
             tag(1, sanitizeText(string))
             num(50, GeometryAngle.degrees(rotation))
-            tag(72, "1") // center justified
+            tag(72, horizontal)
             num(11, X(position))
             num(21, Y(position))
             num(31, 0)
-            tag(73, "2") // middle
+            tag(73, vertical)
         }
 
         for sceneLayer in scene.layers {
@@ -212,8 +223,9 @@ public enum DXFExporter {
                     emitCircle(center, radius, layer: layer)
                 case .arc(let center, let radius, let a0, let a1, _):
                     emitArc(center, radius, a0, a1, layer: layer)
-                case .text(let string, let position, let height, let rotation, _, _):
-                    emitText(string, at: position, height: height, rotation: rotation, layer: .text)
+                case .text(let string, let position, let height, let rotation, let anchor, _):
+                    emitText(string, at: position, height: height, rotation: rotation,
+                             anchor: anchor, layer: .text)
                 }
             }
         }
@@ -256,10 +268,42 @@ public enum DXFExporter {
         }
     }
 
+    /// Folds text to plain ASCII for DXF R12.
+    ///
+    /// R12 carries no encoding declaration, so CAD programs read the file as
+    /// ASCII or the machine's ANSI code page: a UTF-8 "×" in a room label
+    /// arrives as "Ã—" and an em dash as "â€”". Typographic characters are
+    /// therefore replaced with their drafting equivalents, accents are folded,
+    /// and anything left over becomes "?" rather than silently vanishing.
     static func sanitizeText(_ s: String) -> String {
-        // DXF R12 TEXT is single-line ASCII-safe; strip newlines, keep the
-        // common feet/inch characters as-is (valid in DXF strings).
-        s.replacingOccurrences(of: "\n", with: " ")
-            .replacingOccurrences(of: "\r", with: " ")
+        var out = ""
+        out.reserveCapacity(s.count)
+        for character in s {
+            switch character {
+            case "\n", "\r", "\t": out.append(" ")
+            case "×": out.append("x")
+            case "·", "•": out.append("-")
+            case "—", "–", "−": out.append("-")
+            case "‘", "’", "′": out.append("'")
+            case "“", "”", "″": out.append("\"")
+            case "½": out.append("1/2")
+            case "¼": out.append("1/4")
+            case "¾": out.append("3/4")
+            case "⅛": out.append("1/8")
+            case "⅜": out.append("3/8")
+            case "⅝": out.append("5/8")
+            case "⅞": out.append("7/8")
+            case "°": out.append(" deg")
+            case "…": out.append("...")
+            default:
+                if character.isASCII {
+                    out.append(character)
+                } else {
+                    let folded = String(character).folding(options: .diacriticInsensitive, locale: nil)
+                    out.append(folded.allSatisfy(\.isASCII) ? folded : "?")
+                }
+            }
+        }
+        return out
     }
 }

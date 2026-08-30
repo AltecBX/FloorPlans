@@ -16,6 +16,7 @@ struct ExportScreen: View {
     @State private var includeAreas = true
     @State private var includeFurniture = false
     @State private var includeFixtures = true
+    @State private var includeTitleBlock = true
     @State private var shareItem: ShareFile? = nil
     @State private var errorMessage: String? = nil
     @State private var working = false
@@ -44,6 +45,7 @@ struct ExportScreen: View {
                 Toggle("Room areas", isOn: $includeAreas)
                 Toggle("Fixtures", isOn: $includeFixtures)
                 Toggle("Furniture", isOn: $includeFurniture)
+                Toggle("Title block (address + your company)", isOn: $includeTitleBlock)
 
                 exportButton("Floor Plan PNG", icon: "photo") { try exportPNG() }
                 exportButton("3D Dollhouse PNG", icon: "cube.fill") { try export3DPNG() }
@@ -125,7 +127,7 @@ struct ExportScreen: View {
 
     // MARK: - Exports
 
-    private func planOptions() -> PlanGenerator.Options {
+    private func planOptions(for level: LevelGeometry) -> PlanGenerator.Options {
         var options = PlanGenerator.Options()
         options.mode = mode
         options.showDimensions = includeDimensions
@@ -134,7 +136,35 @@ struct ExportScreen: View {
         options.showFurniture = includeFurniture
         options.showFixtures = includeFixtures
         options.formatter = SettingsStore.shared.formatter
+        if includeTitleBlock { options.titleBlock = titleBlock(for: level) }
         return options
+    }
+
+    /// Identifies a plan that leaves the phone: the property it describes, when
+    /// it was measured, and who measured it. Everything is pre-formatted here so
+    /// the drawing engine stays free of branding and locale decisions.
+    private func titleBlock(for level: LevelGeometry) -> PlanTitleBlock {
+        let settings = SettingsStore.shared
+        let meta = project.meta
+        let address = [meta.address, meta.unit]
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+            .joined(separator: ", ")
+        let contact = [settings.companyPhone, settings.companyEmail, settings.companyLicense]
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+            .joined(separator: "  ·  ")
+        let area = ProjectSummaryStats.compute(levels: [level]).totalFloorArea
+        let date = meta.inspectionDate ?? meta.createdAt
+        return PlanTitleBlock(
+            projectName: meta.name,
+            address: address,
+            planTitle: "\(mode.displayName) — \(level.name)",
+            totalArea: settings.formatter.area(area),
+            dateText: date.formatted(date: .abbreviated, time: .omitted),
+            preparedBy: settings.companyName,
+            contact: contact,
+            note: meta.notes.hasPrefix("SAMPLE DATA") ? "SAMPLE DATA — not a field measurement" : "")
     }
 
     private func requireLevel() throws -> LevelGeometry {
@@ -150,7 +180,7 @@ struct ExportScreen: View {
 
     private func exportPNG() throws -> URL {
         let level = try requireLevel()
-        let scene = PlanGenerator.scene(for: level, options: planOptions())
+        let scene = PlanGenerator.scene(for: level, options: planOptions(for: level))
         let image = PlanImageRenderer.image(for: scene)
         guard let data = image.pngData() else {
             throw ProjectStore.StoreError.importUnreadable("PNG encoding failed.")
@@ -174,7 +204,7 @@ struct ExportScreen: View {
 
     private func exportSVG() throws -> URL {
         let level = try requireLevel()
-        let scene = PlanGenerator.scene(for: level, options: planOptions())
+        let scene = PlanGenerator.scene(for: level, options: planOptions(for: level))
         var svgOptions = SVGExporter.Options()
         svgOptions.title = "\(project.name) — \(level.name) (\(mode.displayName))"
         let svg = SVGExporter.svg(for: scene, options: svgOptions)
@@ -185,7 +215,7 @@ struct ExportScreen: View {
 
     private func exportDXF() throws -> URL {
         let level = try requireLevel()
-        let scene = PlanGenerator.scene(for: level, options: planOptions())
+        let scene = PlanGenerator.scene(for: level, options: planOptions(for: level))
         let dxf = DXFExporter.dxf(for: scene)
         let url = fileURL("\(level.name) \(mode.displayName).dxf")
         try Data(dxf.utf8).write(to: url, options: .atomic)

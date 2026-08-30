@@ -94,6 +94,57 @@ public struct PlanLayer: Codable, Hashable, Sendable {
     }
 }
 
+/// Sheet title block drawn under the plan on shared exports (spec §14, §43).
+///
+/// Every field is pre-formatted text: the engine never decides how a date, an
+/// area or a phone number should read — the app does, using the owner's unit
+/// and branding settings — so the same block renders identically to PNG, SVG,
+/// PDF and DXF. Empty fields are skipped.
+public struct PlanTitleBlock: Codable, Hashable, Sendable {
+    /// Property / project name — the largest line.
+    public var projectName: String
+    /// Street address, including any unit number.
+    public var address: String
+    /// What this sheet shows, e.g. "Existing Conditions — Level 1".
+    public var planTitle: String
+    /// Pre-formatted total floor area, e.g. "812 sq ft".
+    public var totalArea: String
+    /// Pre-formatted date, e.g. "Aug 30, 2026".
+    public var dateText: String
+    /// Company or contractor name.
+    public var preparedBy: String
+    /// Phone / email / license line.
+    public var contact: String
+    /// Optional flag line, e.g. "SAMPLE DATA — not a field measurement".
+    public var note: String
+
+    public init(
+        projectName: String = "",
+        address: String = "",
+        planTitle: String = "",
+        totalArea: String = "",
+        dateText: String = "",
+        preparedBy: String = "",
+        contact: String = "",
+        note: String = ""
+    ) {
+        self.projectName = projectName
+        self.address = address
+        self.planTitle = planTitle
+        self.totalArea = totalArea
+        self.dateText = dateText
+        self.preparedBy = preparedBy
+        self.contact = contact
+        self.note = note
+    }
+
+    /// True when there is nothing at all to draw.
+    public var isEmpty: Bool {
+        [projectName, address, planTitle, totalArea, dateText, preparedBy, contact, note]
+            .allSatisfy { $0.trimmingCharacters(in: .whitespaces).isEmpty }
+    }
+}
+
 /// The complete generated 2D plan for one level.
 public struct PlanScene: Codable, Hashable, Sendable {
     public var layers: [PlanLayer]

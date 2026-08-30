@@ -217,6 +217,50 @@ final class ExporterTests: XCTestCase {
         XCTAssertTrue(dxf.contains("120.0000"), "expected 120-inch coordinate in DXF:\n\(dxf)")
     }
 
+    func testDXFTextIsPlainASCII() {
+        // R12 has no encoding declaration, so a UTF-8 "×" in a room label
+        // reaches AutoCAD as "Ã—". Nothing non-ASCII may leave this exporter.
+        let level = SampleFixtures.rectangularRoom(widthFeet: 12, depthFeet: 15,
+                                                   name: "Bedroom", type: .bedroom)
+        var options = PlanGenerator.Options()
+        options.titleBlock = PlanTitleBlock(
+            projectName: "Café Renovación",
+            address: "1 Main St",
+            planTitle: "Existing Conditions — Level 1",
+            totalArea: "180 sq ft",
+            dateText: "Aug 30, 2026",
+            preparedBy: "Jerry’s Renovations",
+            contact: "(555) 010-0100 · Lic. #1")
+        let dxf = DXFExporter.dxf(for: PlanGenerator.scene(for: level, options: options))
+
+        XCTAssertTrue(dxf.allSatisfy(\.isASCII),
+                      "non-ASCII in DXF: \(dxf.filter { !$0.isASCII })")
+        XCTAssertTrue(dxf.contains("15' 0\" x 12' 0\""), "room dimensions should fold × to x")
+        XCTAssertTrue(dxf.contains("CAFE RENOVACION")) // title block sets the name in caps
+        XCTAssertTrue(dxf.contains("Jerry's Renovations"))
+        XCTAssertTrue(dxf.contains("Existing Conditions - Level 1"))
+        XCTAssertTrue(dxf.contains("(555) 010-0100 - Lic. #1"))
+    }
+
+    func testDXFHonoursTextAnchors() {
+        let centered = PlanScene(
+            layers: [PlanLayer(kind: .labels, primitives: [
+                .text(string: "CENTER", position: Vec2(0, 0), height: 0.2,
+                      rotation: 0, anchor: .center, pen: .roomLabel)
+            ])],
+            bounds: Rect2(minX: 0, minY: 0, maxX: 1, maxY: 1), levelName: "Test")
+        XCTAssertTrue(DXFExporter.dxf(for: centered).contains("\n72\n1\n"))
+
+        let leftAligned = PlanScene(
+            layers: [PlanLayer(kind: .decor, primitives: [
+                .text(string: "LEFT", position: Vec2(0, 0), height: 0.2,
+                      rotation: 0, anchor: .leftCenter, pen: .text)
+            ])],
+            bounds: Rect2(minX: 0, minY: 0, maxX: 1, maxY: 1), levelName: "Test")
+        XCTAssertTrue(DXFExporter.dxf(for: leftAligned).contains("\n72\n0\n"),
+                      "title-block text must stay left-justified in CAD")
+    }
+
     func testCSVSchedules() {
         let level = SampleFixtures.apartment()
         let csv = CSVExporter.roomSchedule(levels: [level])

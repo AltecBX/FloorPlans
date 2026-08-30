@@ -15,6 +15,10 @@ public enum PlanGenerator {
         public var showAnnotations = true
         public var showScaleBar = true
         public var showNorthArrow = true
+        /// Sheet title block under the plan. Off by default: the on-screen plan
+        /// and the PDF report carry their own headers, so only standalone
+        /// exports (PNG/SVG/DXF) set one.
+        public var titleBlock: PlanTitleBlock? = nil
         public var formatter = UnitFormatter()
         /// Dimension text height in plan meters.
         public var dimensionTextHeight = 0.16
@@ -137,32 +141,51 @@ public enum PlanGenerator {
                 let at = room.labelPoint
                 let name = room.name.uppercased()
 
-                // Fit the name to the room: shrink until the estimated text
-                // width fits (~0.62 × height per glyph for the system font),
-                // and drop secondary lines for rooms too small to carry them.
+                // Fit the label to the room: shrink until it fits the room's
+                // width with a visible margin from the walls, and never let a
+                // small room carry a label sized for a large one — otherwise a
+                // closet's name runs into its neighbour's and the two read as
+                // one word. Secondary lines are dropped for rooms too small to
+                // carry them.
                 let bounds = room.bounds
-                let maxWidth = max(bounds.width, 0.1) * 0.9
-                var height = options.labelTextHeight
-                let estimated = Double(max(name.count, 1)) * height * 0.62
-                if estimated > maxWidth {
-                    height = maxWidth / (Double(max(name.count, 1)) * 0.62)
+                let maxWidth = max(bounds.width, 0.1) * 0.82
+                var height = min(options.labelTextHeight, max(bounds.height, 0.1) * 0.20)
+                if let fitting = PlanTextMetrics.heightToFit(name, maxWidth: maxWidth) {
+                    height = min(height, fitting)
                 }
                 guard height >= 0.07 else { continue }
 
                 // Secondary lines in priority order: dimensions, then area.
+                // A line is only added when it also fits the room's width, so
+                // labels never spill across walls into the next room.
+                func fits(_ text: String, _ textHeight: Double) -> Bool {
+                    PlanTextMetrics.width(text, height: textHeight) <= maxWidth
+                }
                 var lines: [(text: String, height: Double, pen: PlanPen)] = [
                     (name, height, .roomLabel)
                 ]
                 var budget = bounds.height / (height * 1.6) // rough line capacity
                 if options.showRoomDimensions, height >= 0.10, budget > 2.5,
-                   let dims = GeometryOps.orientedDimensions(room.polygon) {
-                    lines.append((
-                        "\(options.formatter.length(dims.width)) × \(options.formatter.length(dims.depth))",
-                        height * 0.75, .areaLabel))
-                    budget -= 1
+                   let extents = GeometryOps.orientedExtents(room.polygon) {
+                    // "W × D" only describes a room honestly when the room fills
+                    // its bounding box. For an L-shaped or irregular room the
+                    // same numbers are overall extents — labelled so nobody
+                    // multiplies them into an area the room does not have. If
+                    // the honest version does not fit, no version is drawn.
+                    let dims = "\(options.formatter.length(extents.width)) × \(options.formatter.length(extents.depth))"
+                    let text = extents.fill >= 0.95 ? dims : dims + " overall"
+                    let dimsHeight = height * 0.75
+                    if fits(text, dimsHeight) {
+                        lines.append((text, dimsHeight, .areaLabel))
+                        budget -= 1
+                    }
                 }
                 if options.showAreaLabels, height >= 0.11, budget > 2.5 {
-                    lines.append((options.formatter.area(room.floorArea), height * 0.68, .areaLabel))
+                    let text = options.formatter.area(room.floorArea)
+                    let areaHeight = height * 0.68
+                    if fits(text, areaHeight) {
+                        lines.append((text, areaHeight, .areaLabel))
+                    }
                 }
 
                 // Stack the block centered on the label point.
@@ -224,6 +247,11 @@ public enum PlanGenerator {
         if options.showNorthArrow, let north = level.northAngle {
             emitNorthArrow(at: Vec2(bounds.maxX - 0.6, bounds.maxY - 0.6), angle: north,
                            textHeight: options.dimensionTextHeight) { add($0, to: .decor) }
+        }
+
+        // ---- Title block (below the plan, never over it) ----
+        if let block = options.titleBlock, !block.isEmpty {
+            bounds = emitTitleBlock(block, planBounds: bounds) { add($0, to: .decor) }
         }
 
         let orderedKinds: [PlanLayerKind] = [
@@ -435,6 +463,7 @@ public enum PlanGenerator {
             let isInterior = positiveRoom != nil && negativeRoom != nil
             if isInterior && wall.length < 1.0 { continue }
             let side: Double
+            var host: RoomShape? = nil
             if positiveRoom != nil && negativeRoom == nil {
                 side = -1 // dimension on the exterior side
             } else if negativeRoom != nil && positiveRoom == nil {
@@ -442,10 +471,18 @@ public enum PlanGenerator {
             } else if let p = positiveRoom, let n = negativeRoom {
                 // Interior partition: put the dimension in the LARGER room,
                 // where it is least likely to collide with labels/fixtures.
-                side = p.floorArea >= n.floorArea ? 1 : -1
+                let inPositive = p.floorArea >= n.floorArea
+                side = inPositive ? 1 : -1
+                host = inPositive ? p : n
             } else {
                 side = 1
             }
+
+            // Even the larger of two small rooms cannot hold an interior
+            // dimension clear of its own label: the line lands within a foot of
+            // the wall, straight through the room name. Those walls are already
+            // dimensioned on the exterior chains and in the room's W × D label.
+            if let host, min(host.bounds.width, host.bounds.height) < 2.0 { continue }
 
             let offsetMagnitude = wall.thickness / 2
                 + options.dimensionOffset * (isInterior ? 0.62 : 1.0)
@@ -534,6 +571,76 @@ public enum PlanGenerator {
         emit(.text(string: label,
                    position: origin + Vec2(unitLen * Double(segments) / 2, tickHeight + textHeight),
                    height: textHeight * 0.9, rotation: 0, anchor: .center, pen: .symbol))
+    }
+
+    /// Draws the sheet title block in a strip below the plan and returns the
+    /// bounds that now enclose both. Sizing is proportional to the plan so the
+    /// block reads the same whether the sheet is a closet or a whole floor.
+    static func emitTitleBlock(
+        _ block: PlanTitleBlock,
+        planBounds: Rect2,
+        emit: (PlanPrimitive) -> Void
+    ) -> Rect2 {
+        let width = planBounds.width
+        let textHeight = min(max(width * 0.020, 0.11), 0.34)
+        let titleHeight = textHeight * 1.35
+        let pad = textHeight * 1.1
+        let spacing = 1.85
+
+        func clean(_ s: String) -> String { s.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+        // Left column reads as the sheet's identity, right column as its facts.
+        typealias Row = (left: String, right: String, height: Double, leftPen: PlanPen, rightPen: PlanPen)
+        var rows: [Row] = [
+            (clean(block.projectName).uppercased(), clean(block.totalArea), titleHeight, .roomLabel, .roomLabel),
+            (clean(block.address), clean(block.dateText), textHeight, .text, .text),
+            (clean(block.planTitle), clean(block.preparedBy), textHeight, .text, .text),
+            (clean(block.note), clean(block.contact), textHeight * 0.92, .annotation, .text),
+        ]
+        rows.removeAll { $0.left.isEmpty && $0.right.isEmpty }
+        guard !rows.isEmpty else { return planBounds }
+
+        let blockHeight = pad * 2 + rows.reduce(0.0) { $0 + $1.height * spacing }
+        let top = planBounds.minY
+        let bottom = top - blockHeight
+        let dividerX = planBounds.minX + width * 0.62
+        let leftColumn = dividerX - planBounds.minX - pad * 2
+        let rightColumn = planBounds.maxX - dividerX - pad * 2
+
+        emit(.polyline(points: [
+            Vec2(planBounds.minX, bottom), Vec2(planBounds.maxX, bottom),
+            Vec2(planBounds.maxX, top), Vec2(planBounds.minX, top),
+        ], closed: true, pen: .symbol))
+        emit(.line(a: Vec2(dividerX, bottom), b: Vec2(dividerX, top), pen: .symbol))
+
+        // A long company or address line shrinks to its column rather than
+        // running through the divider and out over the border.
+        func fitted(_ text: String, _ height: Double, column: Double) -> Double {
+            guard column > 0,
+                  PlanTextMetrics.width(text, height: height) > column,
+                  let fitting = PlanTextMetrics.heightToFit(text, maxWidth: column)
+            else { return height }
+            return max(fitting, height * 0.55)
+        }
+
+        var y = top - pad
+        for row in rows {
+            y -= row.height * spacing / 2
+            if !row.left.isEmpty {
+                emit(.text(string: row.left, position: Vec2(planBounds.minX + pad, y),
+                           height: fitted(row.left, row.height, column: leftColumn),
+                           rotation: 0, anchor: .leftCenter, pen: row.leftPen))
+            }
+            if !row.right.isEmpty {
+                emit(.text(string: row.right, position: Vec2(dividerX + pad, y),
+                           height: fitted(row.right, row.height, column: rightColumn),
+                           rotation: 0, anchor: .leftCenter, pen: row.rightPen))
+            }
+            y -= row.height * spacing / 2
+        }
+
+        return Rect2(minX: planBounds.minX, minY: bottom,
+                     maxX: planBounds.maxX, maxY: planBounds.maxY)
     }
 
     static func emitNorthArrow(

@@ -21,6 +21,9 @@ Highlights inspired by professional scanning workflows:
   address from where you're standing; you add the apartment number.
 - **2D + 3D together** — the client PDF pairs each level's 2D plan with a
   3D dollhouse render on the same page, plus a standalone 3D PNG export.
+- **Title block on shared plans** — PNG/SVG/DXF exports carry a sheet block
+  with the property, total area, date and your company details, so a plan
+  that leaves the phone identifies itself.
 
 > Internal names: the source folder is `FieldPlan/` and the engine package is
 > `FieldPlanCore` — deliberately unchanged so code history stays clean. The
@@ -58,7 +61,7 @@ Every measurement-critical calculation lives in `FieldPlanCore`, which has
 
 ```sh
 cd Packages/FieldPlanCore
-swift test        # 100 unit tests: parser, geometry, wall graph, QA, takeoff, exports
+swift test        # 113 unit tests: parser, geometry, wall graph, QA, takeoff, exports
 ```
 
 The test suite covers the spec's known shapes (10×10, 12×15, L-shape, angled

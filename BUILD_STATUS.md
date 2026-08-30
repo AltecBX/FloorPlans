@@ -1,6 +1,6 @@
 # BUILD STATUS
 
-_Last updated: 2026-08-27_
+_Last updated: 2026-08-30_
 
 ## Output validation (done in CI environment)
 
@@ -19,7 +19,7 @@ _Last updated: 2026-08-27_
 ## Environment note
 
 This codebase was authored in a Linux cloud environment (Swift 6.2.1
-toolchain). **`Packages/FieldPlanCore` compiles and its 100-test suite
+toolchain). **`Packages/FieldPlanCore` compiles and its 113-test suite
 passes there** — that package contains all measurement-critical logic.
 The iOS app target requires Xcode on macOS; it has been kept to
 conservative iOS 17 APIs and every app source file is machine-checked for
@@ -34,7 +34,7 @@ files touching RoomPlan).
 - **Phase 1 — Foundation**: project scaffold, SwiftData models with
   versioned schema, file store with atomic writes, settings (units,
   precision, branding), imperial parser/formatter, Linux-testable core
-  package, test foundation (100 passing tests).
+  package, test foundation.
 - **Phase 2 — Scanning**: RoomPlan capture flow (level select → name room →
   scan → review → accept/rescan → next room), continuous ARSession for
   multi-room coordinate continuity, StructureBuilder merge, raw
@@ -113,3 +113,29 @@ files touching RoomPlan).
   tile in wet rooms, white built-ins, warm furniture).
 - Core suite now 105 tests, all passing on Linux; plan output re-rendered and
   visually reviewed with the new labels.
+
+## 2026-08-30 — Sheet quality pass (from rendered-output review)
+
+Findings came from rendering the generated SVG in a browser and reading the
+generated DXF back with ezdxf, then fixing what the drawings actually showed:
+
+- **`W × D` is now qualified for irregular rooms.** `GeometryOps.orientedExtents`
+  reports how much of its bounding box a room fills; a room that does not fill
+  it (L-shape, cut corner) is labelled `… overall` so the extents can never be
+  multiplied into an area the room does not have.
+- **Text fitting uses real font metrics.** `PlanTextMetrics` carries Helvetica
+  advance widths (verified against browser measurements in a unit test): a
+  single average was wrong by 2× between `BEDROOM` and `5' 0" × 6' 0"`, which
+  both dropped labels that fit and kept labels that ran over a wall. Labels are
+  now sized to the room, and a line that still does not fit is dropped.
+- **Interior dimensions no longer land on top of small rooms' labels** — a wall
+  is dimensioned inside a room only when that room is at least 2 m in its
+  smaller direction; those walls are already on the exterior chains.
+- **Sheet title block** (`PlanTitleBlock`, opt-in): property, address, plan
+  title, total area, date, company and contact under the plan, wired into the
+  PNG/SVG/DXF exports. The report keeps its own header and does not use it.
+- **DXF text is now plain ASCII.** R12 declares no encoding, so the `×` in
+  every room label reached CAD as `Ã—`; text is folded (×→x, dashes, curly
+  quotes, accents) and text anchors are honoured, so title-block lines stay
+  left-justified in AutoCAD.
+- Core suite now 113 tests, all passing on Linux.
