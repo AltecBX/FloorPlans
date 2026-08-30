@@ -98,6 +98,12 @@ struct PlanPenStyle {
         case .wallPoche: return dark ? UIColor(white: 0.88, alpha: 1) : UIColor(white: 0.13, alpha: 1)
         case .wallNewPoche: return UIColor.systemBlue.withAlphaComponent(0.55)
         case .fixtureFill: return dark ? UIColor(white: 1, alpha: 0.06) : UIColor(white: 0, alpha: 0.045)
+        case .roomTint(let type):
+            let tint = type.planTint
+            let color = UIColor(red: tint.red, green: tint.green, blue: tint.blue, alpha: 1)
+            // On a dark sheet the same hues read as a wash over the background
+            // rather than as paper colour.
+            return dark ? color.withAlphaComponent(0.22) : color
         case .none: return nil
         }
     }

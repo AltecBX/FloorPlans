@@ -36,11 +36,17 @@ func write(_ text: String, _ name: String) throws {
 
 // SVG — existing conditions and demolition plan.
 let stats = ProjectSummaryStats.compute(levels: [level])
+let totalArea = formatter.area(stats.totalFloorArea)
 options.titleBlock = PlanTitleBlock(
+    style: .centered,
+    summaryLines: [
+        "Total GLA: \(totalArea)  |  Total: \(totalArea)",
+        "1st floor: \(totalArea)",
+    ],
     projectName: "SAMPLE Apartment",
     address: "123 Main Street, Apt 4B, Brooklyn NY 11201",
     planTitle: "Existing Conditions — \(level.name)",
-    totalArea: formatter.area(stats.totalFloorArea),
+    totalArea: totalArea,
     dateText: "August 30, 2026",
     preparedBy: "Jerry's Renovations",
     contact: "(555) 010-0100  ·  Lic. #123456",

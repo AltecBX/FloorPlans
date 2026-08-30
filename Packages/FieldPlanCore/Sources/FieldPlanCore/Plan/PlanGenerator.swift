@@ -5,16 +5,26 @@ public enum PlanGenerator {
 
     public struct Options: Sendable {
         public var mode: PlanRenderMode = .existing
-        public var showDimensions = true
+        /// Dimension chains. Off by default: a client sheet reads each room's
+        /// size off its label, and the chains crowd small rooms. The plan editor
+        /// and any drawing issued to a trade turn them on.
+        public var showDimensions = false
         public var showRoomLabels = true
         /// "11' 5\" × 12' 0\"" under each room name (CubiCasa-style).
         public var showRoomDimensions = true
-        public var showAreaLabels = true
+        /// Per-room area under the dimensions. Off by default: the totals
+        /// belong in the title block, and a third line crowds a small room.
+        public var showAreaLabels = false
         public var showFixtures = true
         public var showFurniture = false
         public var showAnnotations = true
-        public var showScaleBar = true
-        public var showNorthArrow = true
+        /// Room colour coding by type (bedrooms warm, wet rooms cool).
+        public var showRoomColors = true
+        /// Off by default: a client-facing sheet reads the room dimensions off
+        /// the labels, and a graphic scale is meaningless once the sheet is
+        /// resized. Turn it on for a drawing issued to a trade.
+        public var showScaleBar = false
+        public var showNorthArrow = false
         /// Sheet title block under the plan. Off by default: the on-screen plan
         /// and the PDF report carry their own headers, so only standalone
         /// exports (PNG/SVG/DXF) set one.
@@ -83,13 +93,26 @@ public enum PlanGenerator {
 
     // MARK: - Scene generation
 
-    public static func scene(for level: LevelGeometry, options: Options = Options()) -> PlanScene {
+    public static func scene(for rawLevel: LevelGeometry, options: Options = Options()) -> PlanScene {
         var layers: [PlanLayerKind: [PlanPrimitive]] = [:]
         func add(_ primitive: PlanPrimitive, to kind: PlanLayerKind) {
             layers[kind, default: []].append(primitive)
         }
 
         let mode = options.mode
+        // Doors a scan could not read hinges for get their swing derived from
+        // the rooms around them; a hand-set swing always wins.
+        let level = DoorSwingInference.resolvingSwings(in: rawLevel)
+
+        // ---- Room colour coding, under everything ----
+        if options.showRoomColors {
+            for room in level.rooms {
+                guard includeElement(room.changeStatus, mode: mode) else { continue }
+                guard room.polygon.count >= 3 else { continue }
+                add(.polygon(points: room.polygon, fill: .roomTint(room.type), outline: nil),
+                    to: .roomFills)
+            }
+        }
 
         // ---- Walls with openings ----
         for wall in level.walls {
@@ -255,7 +278,7 @@ public enum PlanGenerator {
         }
 
         let orderedKinds: [PlanLayerKind] = [
-            .furniture, .fixtures, .walls, .demolition, .newConstruction,
+            .roomFills, .furniture, .fixtures, .walls, .demolition, .newConstruction,
             .openings, .dimensions, .labels, .annotations, .decor,
         ]
         let planLayers = orderedKinds.compactMap { kind -> PlanLayer? in
@@ -376,6 +399,29 @@ public enum PlanGenerator {
         }
     }
 
+    /// Rounded-rectangle outline in a fixture's local frame, as a polyline —
+    /// enough segments to read as a curve at plan scale.
+    static func roundedRectangle(
+        halfWidth: Double, halfDepth: Double, radius: Double,
+        local: (Double, Double) -> Vec2
+    ) -> [Vec2] {
+        let r = min(radius, min(halfWidth, halfDepth) * 0.95)
+        let corners: [(Double, Double, Double)] = [
+            (halfWidth - r, halfDepth - r, 0),           // +x +y
+            (-halfWidth + r, halfDepth - r, .pi / 2),    // -x +y
+            (-halfWidth + r, -halfDepth + r, .pi),       // -x -y
+            (halfWidth - r, -halfDepth + r, 3 * .pi / 2), // +x -y
+        ]
+        var points: [Vec2] = []
+        for (cx, cy, startAngle) in corners {
+            for step in 0...4 {
+                let angle = startAngle + (.pi / 2) * Double(step) / 4
+                points.append(local(cx + r * cos(angle), cy + r * sin(angle)))
+            }
+        }
+        return points
+    }
+
     /// Returns (start, end) covering the quarter-swing from a0 to a1 going the
     /// short way, normalized so end > start for counter-clockwise arcs.
     static func shortestArc(from a0: Double, to a1: Double) -> (Double, Double) {
@@ -402,24 +448,67 @@ public enum PlanGenerator {
         let w = fixture.size.x
         let d = fixture.size.y
 
+        // Fixture symbols follow the shapes a client recognises on a real estate
+        // plan: a tub with its rolled rim and tap, a toilet as tank plus bowl,
+        // a basin inside its counter. `local` places them in the fixture's own
+        // frame, so every symbol rotates with the fixture.
         switch fixture.category {
         case .toilet:
-            // Tank against the wall edge + bowl.
-            emit(.circle(center: local(0, -d * 0.15), radius: min(w, d) * 0.28, pen: pen, filled: false))
-        case .sink, .vanity:
-            emit(.circle(center: local(0, 0), radius: min(w, d) * 0.3, pen: pen, filled: false))
-        case .bathtub, .shower:
-            let iw = w * 0.38
-            let id2 = d * 0.38
+            // Tank across the back, bowl in front of it.
+            let tankDepth = d * 0.26
             emit(.polygon(points: [
-                local(-iw, -id2), local(iw, -id2), local(iw, id2), local(-iw, id2),
+                local(-w * 0.34, -d / 2 + 0.01), local(w * 0.34, -d / 2 + 0.01),
+                local(w * 0.34, -d / 2 + tankDepth), local(-w * 0.34, -d / 2 + tankDepth),
             ], fill: .none, outline: pen))
+            emit(.circle(center: local(0, d * 0.12), radius: min(w * 0.36, d * 0.30),
+                         pen: pen, filled: false))
+        case .sink, .vanity:
+            // Basin inset in the counter, tap at the back.
+            let basin = min(w, d) * 0.30
+            emit(.circle(center: local(0, d * 0.04), radius: basin, pen: pen, filled: false))
+            emit(.circle(center: local(0, -d * 0.30), radius: basin * 0.22, pen: pen, filled: true))
+            emit(.line(a: local(-basin * 0.28, -d * 0.30), b: local(basin * 0.28, -d * 0.30), pen: pen))
+        case .bathtub:
+            // Rolled rim: an inner tub outline with rounded ends, plus the tap.
+            emit(.polyline(points: roundedRectangle(
+                halfWidth: w * 0.40, halfDepth: d * 0.38,
+                radius: min(w, d) * 0.22, local: local), closed: true, pen: pen))
+            emit(.circle(center: local(0, -d * 0.30), radius: min(w, d) * 0.06,
+                         pen: pen, filled: false))
+        case .shower:
+            // Tray outline plus the drain and the diagonal that reads "shower".
+            emit(.polygon(points: [
+                local(-w * 0.40, -d * 0.40), local(w * 0.40, -d * 0.40),
+                local(w * 0.40, d * 0.40), local(-w * 0.40, d * 0.40),
+            ], fill: .none, outline: pen))
+            emit(.line(a: local(-w * 0.40, -d * 0.40), b: local(w * 0.40, d * 0.40), pen: pen))
+            emit(.circle(center: local(0, 0), radius: min(w, d) * 0.07, pen: pen, filled: false))
         case .stove:
-            let bx = w * 0.24
-            let by = d * 0.24
+            let bx = w * 0.22
+            let by = d * 0.20
             for (sx, sy) in [(-bx, -by), (bx, -by), (-bx, by), (bx, by)] {
-                emit(.circle(center: local(sx, sy), radius: min(w, d) * 0.11, pen: pen, filled: false))
+                emit(.circle(center: local(sx, sy), radius: min(w, d) * 0.10, pen: pen, filled: false))
             }
+            // Control panel strip at the back.
+            emit(.line(a: local(-w / 2, -d * 0.38), b: local(w / 2, -d * 0.38), pen: pen))
+        case .bed:
+            // Pillows across the head, coverlet fold across the foot.
+            let pillowDepth = d * 0.18
+            emit(.polygon(points: [
+                local(-w * 0.42, -d * 0.44), local(w * 0.42, -d * 0.44),
+                local(w * 0.42, -d * 0.44 + pillowDepth), local(-w * 0.42, -d * 0.44 + pillowDepth),
+            ], fill: .none, outline: pen))
+            emit(.line(a: local(0, -d * 0.44), b: local(0, -d * 0.44 + pillowDepth), pen: pen))
+            emit(.line(a: local(-w / 2, d * 0.16), b: local(w / 2, d * 0.16), pen: pen))
+        case .sofa:
+            // Back cushion along one long edge, arms at each end.
+            let back = d * 0.24
+            emit(.line(a: local(-w / 2, -d / 2 + back), b: local(w / 2, -d / 2 + back), pen: pen))
+            emit(.line(a: local(-w / 2 + w * 0.12, -d / 2 + back), b: local(-w / 2 + w * 0.12, d / 2), pen: pen))
+            emit(.line(a: local(w / 2 - w * 0.12, -d / 2 + back), b: local(w / 2 - w * 0.12, d / 2), pen: pen))
+        case .cabinetBase, .countertop, .island:
+            // Counter edge line, the way cabinet runs are drawn.
+            emit(.line(a: local(-w / 2, d * 0.34), b: local(w / 2, d * 0.34), pen: pen))
         case .stairs:
             // Tread lines across the depth.
             let treads = max(2, Int(d / 0.28))
@@ -589,6 +678,13 @@ public enum PlanGenerator {
 
         func clean(_ s: String) -> String { s.trimmingCharacters(in: .whitespacesAndNewlines) }
 
+        if block.style == .centered {
+            return emitCenteredTitleBlock(
+                block, planBounds: planBounds,
+                textHeight: textHeight, titleHeight: titleHeight,
+                pad: pad, spacing: spacing, clean: clean, emit: emit)
+        }
+
         // Left column reads as the sheet's identity, right column as its facts.
         typealias Row = (left: String, right: String, height: Double, leftPen: PlanPen, rightPen: PlanPen)
         var rows: [Row] = [
@@ -640,6 +736,43 @@ public enum PlanGenerator {
         }
 
         return Rect2(minX: planBounds.minX, minY: bottom,
+                     maxX: planBounds.maxX, maxY: planBounds.maxY)
+    }
+
+    /// Centered, borderless block: who prepared the plan, then the area totals.
+    /// The layout a client sees under a marketing floor plan.
+    private static func emitCenteredTitleBlock(
+        _ block: PlanTitleBlock,
+        planBounds: Rect2,
+        textHeight: Double,
+        titleHeight: Double,
+        pad: Double,
+        spacing: Double,
+        clean: (String) -> String,
+        emit: (PlanPrimitive) -> Void
+    ) -> Rect2 {
+        var rows: [(text: String, height: Double, pen: PlanPen)] = []
+        let heading = clean(block.preparedBy).isEmpty ? clean(block.projectName) : clean(block.preparedBy)
+        if !heading.isEmpty { rows.append((heading, titleHeight, .roomLabel)) }
+        for line in block.summaryLines where !clean(line).isEmpty {
+            rows.append((clean(line), textHeight, .roomLabel))
+        }
+        let address = clean(block.address)
+        if !address.isEmpty { rows.append((address, textHeight * 0.95, .text)) }
+        let note = clean(block.note)
+        if !note.isEmpty { rows.append((note, textHeight * 0.9, .annotation)) }
+        guard !rows.isEmpty else { return planBounds }
+
+        let blockHeight = pad + rows.reduce(0.0) { $0 + $1.height * spacing }
+        let centerX = planBounds.center.x
+        var y = planBounds.minY - pad
+        for row in rows {
+            y -= row.height * spacing / 2
+            emit(.text(string: row.text, position: Vec2(centerX, y), height: row.height,
+                       rotation: 0, anchor: .center, pen: row.pen))
+            y -= row.height * spacing / 2
+        }
+        return Rect2(minX: planBounds.minX, minY: planBounds.minY - blockHeight,
                      maxX: planBounds.maxX, maxY: planBounds.maxY)
     }
 

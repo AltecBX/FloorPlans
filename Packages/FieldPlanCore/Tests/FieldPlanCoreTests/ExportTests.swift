@@ -102,7 +102,9 @@ final class PlanGeneratorTests: XCTestCase {
 
     func testSceneContainsExpectedLayers() {
         let level = SampleFixtures.apartment()
-        let scene = PlanGenerator.scene(for: level)
+        var options = PlanGenerator.Options()
+        options.showDimensions = true
+        let scene = PlanGenerator.scene(for: level, options: options)
         let kinds = Set(scene.layers.map(\.kind))
         XCTAssertTrue(kinds.contains(.walls))
         XCTAssertTrue(kinds.contains(.openings))
@@ -137,7 +139,9 @@ final class PlanGeneratorTests: XCTestCase {
 
     func testDimensionTextMatchesWallLength() {
         let level = SampleFixtures.rectangularRoom(widthFeet: 10, depthFeet: 10)
-        let scene = PlanGenerator.scene(for: level)
+        var options = PlanGenerator.Options()
+        options.showDimensions = true
+        let scene = PlanGenerator.scene(for: level, options: options)
         let texts: [String] = scene.layer(.dimensions)!.primitives.compactMap {
             if case .text(let s, _, _, _, _, _) = $0 { return s }
             return nil
@@ -168,7 +172,9 @@ final class ExporterTests: XCTestCase {
             WallOpening(kind: .door, centerOffset: 1.5, width: 0.9, height: 2, swing: DoorSwing()),
             WallOpening(kind: .window, centerOffset: 2.4, width: 0.9, height: 1.2, sillHeight: 0.9),
         ]
-        return PlanGenerator.scene(for: level)
+        var options = PlanGenerator.Options()
+        options.showDimensions = true
+        return PlanGenerator.scene(for: level, options: options)
     }
 
     func testSVGStructure() {
@@ -223,7 +229,9 @@ final class ExporterTests: XCTestCase {
         let level = SampleFixtures.rectangularRoom(widthFeet: 12, depthFeet: 15,
                                                    name: "Bedroom", type: .bedroom)
         var options = PlanGenerator.Options()
+        options.showDimensions = true
         options.titleBlock = PlanTitleBlock(
+            style: .sheet,
             projectName: "Café Renovación",
             address: "1 Main St",
             planTitle: "Existing Conditions — Level 1",

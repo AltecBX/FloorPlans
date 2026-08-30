@@ -255,6 +255,8 @@ struct PlanEditorScreen: View {
                     OpeningInspector(
                         wall: wall,
                         opening: opening,
+                        resolvedSwing: opening.swing
+                            ?? DoorSwingInference.swing(for: opening, on: wall, in: level),
                         formatter: formatter,
                         onUpdate: { updated in
                             commit { EditorEngine.updateOpening(in: $0, wallID: wallID, opening: updated) }
@@ -770,6 +772,10 @@ private struct WallInspector: View {
 private struct OpeningInspector: View {
     let wall: Wall
     let opening: WallOpening
+    /// The swing actually drawn: the hand-set one, or the one derived from the
+    /// rooms around the door. Flipping starts from what is on the plan, so the
+    /// first tap always moves the door the owner is looking at.
+    let resolvedSwing: DoorSwing
     let formatter: UnitFormatter
     let onUpdate: (WallOpening) -> Void
     let onStatus: (ChangeStatus) -> Void
@@ -831,9 +837,7 @@ private struct OpeningInspector: View {
                 if opening.kind == .door {
                     Button {
                         var updated = opening
-                        var swing = updated.swing ?? DoorSwing()
-                        swing.hingeAtStart.toggle()
-                        updated.swing = swing
+                        updated.swing = resolvedSwing.mirrored
                         onUpdate(updated)
                     } label: {
                         Image(systemName: "arrow.left.arrow.right")
@@ -842,9 +846,7 @@ private struct OpeningInspector: View {
                     .accessibilityLabel("Flip hinge side")
                     Button {
                         var updated = opening
-                        var swing = updated.swing ?? DoorSwing()
-                        swing.opensPositiveSide.toggle()
-                        updated.swing = swing
+                        updated.swing = resolvedSwing.reversed
                         onUpdate(updated)
                     } label: {
                         Image(systemName: "arrow.up.arrow.down")

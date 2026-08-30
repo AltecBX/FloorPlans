@@ -16,7 +16,7 @@ struct ReportOptions {
     var includeNotes = true
     var includeVerification = true
     var includeDisclaimer = true
-    var planDimensions = true
+    var planDimensions = false
     var planFurniture = false
     /// 3D dollhouse view on the same page as each 2D plan.
     var include3D = true

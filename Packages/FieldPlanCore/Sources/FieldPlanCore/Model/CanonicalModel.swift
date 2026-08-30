@@ -98,6 +98,16 @@ public struct DoorSwing: Codable, Hashable, Sendable {
         self.hingeAtStart = hingeAtStart
         self.opensPositiveSide = opensPositiveSide
     }
+
+    /// Flips which jamb carries the hinges.
+    public var mirrored: DoorSwing {
+        DoorSwing(hingeAtStart: !hingeAtStart, opensPositiveSide: opensPositiveSide)
+    }
+
+    /// Flips which side of the wall the door opens into.
+    public var reversed: DoorSwing {
+        DoorSwing(hingeAtStart: hingeAtStart, opensPositiveSide: !opensPositiveSide)
+    }
 }
 
 /// A door, window or plain opening hosted on a wall.

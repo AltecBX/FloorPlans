@@ -12,8 +12,8 @@ struct ExportScreen: View {
     @State private var snapshot: PlanSnapshot? = nil
     @State private var levelID: UUID? = nil
     @State private var mode: PlanRenderMode = .existing
-    @State private var includeDimensions = true
-    @State private var includeAreas = true
+    @State private var includeDimensions = false
+    @State private var includeAreas = false
     @State private var includeFurniture = false
     @State private var includeFixtures = true
     @State private var includeTitleBlock = true
@@ -157,8 +157,17 @@ struct ExportScreen: View {
             .filter { !$0.isEmpty }
             .joined(separator: "  ·  ")
         let area = ProjectSummaryStats.compute(levels: [level]).totalFloorArea
+        let allLevels = snapshot?.levels ?? [level]
+        let grossArea = ProjectSummaryStats.compute(levels: allLevels).totalFloorArea
+        let formatter = settings.formatter
+        var summary = ["Total GLA: \(formatter.area(grossArea))  |  Total: \(formatter.area(grossArea))"]
+        if allLevels.count > 1 {
+            summary.append("\(level.name): \(formatter.area(area))")
+        }
         let date = meta.inspectionDate ?? meta.createdAt
         return PlanTitleBlock(
+            style: .centered,
+            summaryLines: summary,
             projectName: meta.name,
             address: address,
             planTitle: "\(mode.displayName) — \(level.name)",

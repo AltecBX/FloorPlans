@@ -139,3 +139,34 @@ generated DXF back with ezdxf, then fixing what the drawings actually showed:
   quotes, accents) and text anchors are honoured, so title-block lines stay
   left-justified in AutoCAD.
 - Core suite now 113 tests, all passing on Linux.
+
+## 2026-08-30 — Client-sheet pass (matched to the owner's CubiCasa reference)
+
+Driven by a marked-up reference plan from the owner, verified by rendering:
+
+- **Door swings are derived, not defaulted.** `ScanConversion` and the sample
+  fixtures were hard-setting `DoorSwing()`, so every door on every plan hinged
+  the same way regardless of the rooms around it. Both now leave `swing` nil and
+  `DoorSwingInference` reads it from the geometry: exterior doors swing in,
+  closet doors swing out, doors off circulation swing into the room they serve,
+  and between two rooms the leaf goes into the smaller one; the hinge lands on
+  the jamb that parks the leaf against a wall. A hand-set swing always wins, and
+  the editor's flip buttons now start from the swing actually drawn.
+- **Room colour coding** by room type (`RoomType.planTint`, new `.roomFills`
+  layer under everything). Muted register: warm for sleeping, cool for wet
+  rooms. Skipped in DXF, where a fill would double every room outline.
+- **Client-sheet defaults**: dimension chains, per-room areas, scale bar and
+  north arrow are all off by default — the room label carries `W × D` and the
+  totals live in the title block. The plan editor turns dimensions back on.
+- **Centered title block** (`PlanTitleBlock.Style.centered`): company, area
+  totals, address, centered under the plan with no border. The bordered
+  two-column sheet block is still available as `.sheet`.
+- **Plan symbols redrawn** to read at a glance: tub with rolled rim and tap,
+  toilet as tank plus bowl, basin inset in its counter, range with burners and
+  control strip, bed with pillows, sofa with back and arms.
+- **3D furniture is modelled, not boxed** (`FurnitureModels`): each scanned
+  bounding box is filled with primitives — bed with mattress and pillows, sofa
+  with back and arms, toilet with tank and bowl, tub with a recessed basin,
+  cabinets with door fronts, appliances with handles and burners, stairs with
+  real treads. Proportions stay exactly as scanned.
+- Core suite now 117 tests, all passing on Linux.

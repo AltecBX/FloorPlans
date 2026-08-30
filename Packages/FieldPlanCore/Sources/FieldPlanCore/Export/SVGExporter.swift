@@ -43,6 +43,7 @@ public enum SVGExporter {
             case .wallPoche: return "#1A1A1A"
             case .wallNewPoche: return "#8A8A8A"
             case .fixtureFill: return "#F2F2F2"
+            case .roomTint(let type): return type.planTint.hex
             case .none: return nil
             }
         }
@@ -143,7 +144,7 @@ public enum SVGExporter {
         case .furniture: return PenStyle(color: "#9A9A9A", width: 0.9 * k, dash: nil)
         case .dimension: return PenStyle(color: "#4A4A4A", width: 0.8 * k, dash: nil)
         case .text: return PenStyle(color: "#2A2A2A", width: 0.8 * k, dash: nil)
-        case .roomLabel: return PenStyle(color: "#111111", width: 1.0 * k, dash: nil)
+        case .roomLabel: return PenStyle(color: "#6B6B6B", width: 1.0 * k, dash: nil)
         case .areaLabel: return PenStyle(color: "#555555", width: 0.8 * k, dash: nil)
         case .annotation: return PenStyle(color: "#8A4B00", width: 0.9 * k, dash: nil)
         case .boundary: return PenStyle(color: "#7A7A7A", width: 1.2 * k, dash: "\(10 * k),\(6 * k)")

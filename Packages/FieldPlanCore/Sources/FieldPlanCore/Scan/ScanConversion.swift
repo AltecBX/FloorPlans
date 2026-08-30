@@ -302,7 +302,10 @@ public enum ScanConversion {
                     width: min(surface.width, wall.length),
                     height: surface.height,
                     sillHeight: sill,
-                    swing: kind == .door ? DoorSwing() : nil,
+                    // A scan sees the hole, never the hinges: leaving this nil
+                    // lets the plan derive the swing from the rooms around the
+                    // door, and a hand-set swing in the editor overrides it.
+                    swing: nil,
                     changeStatus: .existing,
                     source: .lidarScanned,
                     confidence: surface.captureConfidence

@@ -35,7 +35,7 @@ public enum SampleFixtures {
     static func door(atFeet offset: Double, widthFeet: Double = 2.5, height: Double = 2.0320) -> WallOpening {
         WallOpening(
             kind: .door, centerOffset: offset * ft, width: widthFeet * ft,
-            height: height, swing: DoorSwing(), source: .sampleData, confidence: .high
+            height: height, swing: nil, source: .sampleData, confidence: .high
         )
     }
 

@@ -210,6 +210,9 @@ public enum DXFExporter {
         }
 
         for sceneLayer in scene.layers {
+            // Room colour coding is presentation, not geometry: emitting it
+            // would put a second outline on every room boundary in CAD.
+            if sceneLayer.kind == .roomFills { continue }
             for primitive in sceneLayer.primitives {
                 let layer = dxfLayer(for: primitive, in: sceneLayer.kind)
                 switch primitive {
@@ -265,6 +268,7 @@ public enum DXFExporter {
         case .dimensions: return .dimensions
         case .labels, .annotations: return .text
         case .decor: return .symbols
+        case .roomFills: return .walls
         }
     }
 

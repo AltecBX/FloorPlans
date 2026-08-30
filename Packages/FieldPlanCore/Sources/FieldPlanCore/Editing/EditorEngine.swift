@@ -387,7 +387,8 @@ public enum EditorEngine {
             width: width,
             height: height,
             sillHeight: kind == .window ? max(sillHeight, 0) : 0,
-            swing: kind == .door ? DoorSwing() : nil,
+            // Derived from the surrounding rooms until set by hand.
+            swing: nil,
             changeStatus: changeStatus,
             source: .manualEntry,
             confidence: .high

@@ -449,27 +449,20 @@ enum ThreeDSceneBuilder {
 
     static func fixtureNode(for fixture: FixtureItem, mode: PlanRenderMode) -> SCNNode {
         let height = fixture.height ?? defaultHeight(for: fixture.category)
-        let geometry = SCNBox(
-            width: CGFloat(max(fixture.size.x, 0.05)),
-            height: CGFloat(max(height, 0.05)),
-            length: CGFloat(max(fixture.size.y, 0.05)),
-            chamferRadius: 0.01)
-        let material = SCNMaterial()
+        // Renovation state overrides the furniture palette so demolished and
+        // new items stay obvious; otherwise each category gets its own model.
+        let override: UIColor?
         switch fixture.changeStatus {
         case .demolish where mode != .proposed:
-            material.diffuse.contents = UIColor.systemRed.withAlphaComponent(0.45)
+            override = UIColor.systemRed.withAlphaComponent(0.45)
         case .new where mode == .proposed:
-            material.diffuse.contents = UIColor.systemBlue.withAlphaComponent(0.6)
+            override = UIColor.systemBlue.withAlphaComponent(0.6)
         default:
-            // Presentation palette: soft warm furniture, near-white built-ins
-            // and appliances (reads like a staged dollhouse render).
-            material.diffuse.contents = fixture.category.isFurniture
-                ? UIColor(red: 0.80, green: 0.74, blue: 0.66, alpha: 0.95)
-                : UIColor(white: 0.96, alpha: 1)
+            override = nil
         }
-        geometry.materials = [material]
-        let node = SCNNode(geometry: geometry)
-        node.position = plans(fixture.center, y: height / 2)
+        let node = FurnitureModels.node(for: fixture, height: height, override: override)
+        // The model is built with its origin on the floor.
+        node.position = plans(fixture.center, y: 0)
         node.eulerAngles.y = Float(fixture.rotation)
         node.name = "fixture:\(fixture.id.uuidString)"
         return node

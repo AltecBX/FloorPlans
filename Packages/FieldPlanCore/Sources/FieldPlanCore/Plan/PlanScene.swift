@@ -29,11 +29,62 @@ public enum PlanPen: String, Codable, CaseIterable, Sendable {
     case symbol           // scale bar, north arrow
 }
 
+/// A colour the engine decides, in the few places where the choice belongs to
+/// the drawing rather than to the medium (room coding). Components are 0…1.
+public struct PlanColor: Codable, Hashable, Sendable {
+    public var red: Double
+    public var green: Double
+    public var blue: Double
+
+    public init(_ red: Double, _ green: Double, _ blue: Double) {
+        self.red = red
+        self.green = green
+        self.blue = blue
+    }
+
+    /// `#RRGGBB`.
+    public var hex: String {
+        func byte(_ v: Double) -> Int { Int((min(max(v, 0), 1) * 255).rounded()) }
+        return String(format: "#%02X%02X%02X", byte(red), byte(green), byte(blue))
+    }
+}
+
+public extension RoomType {
+    /// Room colour coding, in the muted register a client-facing plan uses:
+    /// enough to tell the sleeping, wet and living areas apart at a glance,
+    /// never enough to fight the walls or the labels for attention.
+    var planTint: PlanColor {
+        switch self {
+        case .bedroom:
+            return PlanColor(0.914, 0.780, 0.667)   // warm peach
+        case .bathroom, .powderRoom:
+            return PlanColor(0.788, 0.855, 0.878)   // pale blue
+        case .kitchen:
+            return PlanColor(0.867, 0.902, 0.851)   // pale sage
+        case .diningRoom:
+            return PlanColor(0.941, 0.906, 0.847)   // sand
+        case .livingRoom, .familyRoom:
+            return PlanColor(0.961, 0.945, 0.925)   // warm off-white
+        case .office:
+            return PlanColor(0.882, 0.906, 0.937)   // blue-grey
+        case .laundry, .utilityRoom, .mechanicalRoom:
+            return PlanColor(0.898, 0.890, 0.925)   // lilac-grey
+        case .closet, .walkInCloset, .storage:
+            return PlanColor(0.933, 0.929, 0.918)   // light grey
+        case .garage, .basement:
+            return PlanColor(0.925, 0.925, 0.925)
+        case .hallway, .foyer, .stairHall, .balcony, .terrace, .other:
+            return PlanColor(0.976, 0.973, 0.965)
+        }
+    }
+}
+
 /// Fill styles for closed shapes.
-public enum PlanFill: String, Codable, CaseIterable, Sendable {
+public enum PlanFill: Codable, Hashable, Sendable {
     case wallPoche        // solid cut-wall fill
     case wallNewPoche     // new wall fill (rendered lighter / hatched)
     case fixtureFill      // very light fill
+    case roomTint(RoomType)   // room colour coding
     case none
 }
 
@@ -57,6 +108,7 @@ public enum PlanPrimitive: Codable, Hashable, Sendable {
 }
 
 public enum PlanLayerKind: String, Codable, CaseIterable, Sendable {
+    case roomFills      // colour coding, drawn under everything
     case walls
     case demolition
     case newConstruction
@@ -70,6 +122,7 @@ public enum PlanLayerKind: String, Codable, CaseIterable, Sendable {
 
     public var displayName: String {
         switch self {
+        case .roomFills: return "Room Colors"
         case .walls: return "Walls"
         case .demolition: return "Demolition"
         case .newConstruction: return "New Construction"
@@ -101,6 +154,27 @@ public struct PlanLayer: Codable, Hashable, Sendable {
 /// and branding settings — so the same block renders identically to PNG, SVG,
 /// PDF and DXF. Empty fields are skipped.
 public struct PlanTitleBlock: Codable, Hashable, Sendable {
+    public enum Style: String, Codable, CaseIterable, Sendable {
+        /// Centered under the plan with no border: company, then area totals.
+        /// The look of a client-facing marketing sheet.
+        case centered
+        /// Bordered two-column sheet block: identity left, facts right.
+        /// The look of a drawing issued for construction.
+        case sheet
+
+        public var displayName: String {
+            switch self {
+            case .centered: return "Centered"
+            case .sheet: return "Drawing Sheet"
+            }
+        }
+    }
+
+    /// How the block is laid out under the plan.
+    public var style: Style
+    /// Area totals under the company name in `.centered` style, e.g.
+    /// "Total GLA: 547 sq ft" then "1st floor: 547 sq ft".
+    public var summaryLines: [String]
     /// Property / project name — the largest line.
     public var projectName: String
     /// Street address, including any unit number.
@@ -119,6 +193,8 @@ public struct PlanTitleBlock: Codable, Hashable, Sendable {
     public var note: String
 
     public init(
+        style: Style = .centered,
+        summaryLines: [String] = [],
         projectName: String = "",
         address: String = "",
         planTitle: String = "",
@@ -128,6 +204,8 @@ public struct PlanTitleBlock: Codable, Hashable, Sendable {
         contact: String = "",
         note: String = ""
     ) {
+        self.style = style
+        self.summaryLines = summaryLines
         self.projectName = projectName
         self.address = address
         self.planTitle = planTitle
@@ -140,7 +218,8 @@ public struct PlanTitleBlock: Codable, Hashable, Sendable {
 
     /// True when there is nothing at all to draw.
     public var isEmpty: Bool {
-        [projectName, address, planTitle, totalArea, dateText, preparedBy, contact, note]
+        ([projectName, address, planTitle, totalArea, dateText, preparedBy, contact, note]
+            + summaryLines)
             .allSatisfy { $0.trimmingCharacters(in: .whitespaces).isEmpty }
     }
 }

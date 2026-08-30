@@ -402,6 +402,7 @@ final class AutoLabelingTests: XCTestCase {
         let plain = PlanGenerator.scene(for: level, options: options)
 
         options.titleBlock = PlanTitleBlock(
+            style: .sheet,
             projectName: "Maple Street Apartment",
             address: "123 Main St, Apt 4B, Brooklyn NY",
             planTitle: "Existing Conditions — Level 1",

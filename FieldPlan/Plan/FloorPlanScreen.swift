@@ -13,7 +13,7 @@ struct FloorPlanScreen: View {
     @State private var levelID: UUID? = nil
     @State private var mode: PlanRenderMode = .existing
     @State private var compareSideBySide = false
-    @State private var showDimensions = true
+    @State private var showDimensions = false
     @State private var showFurniture = false
     @State private var showFixtures = true
     @State private var showLabels = true
