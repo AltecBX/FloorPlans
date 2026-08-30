@@ -92,3 +92,24 @@ files touching RoomPlan).
 
 - Nothing blocked in code. Real-device RoomPlan validation requires the
   owner's LiDAR iPhone (cannot be simulated).
+
+## 2026-08-30 — Jerry FieldPlans update
+
+- Renamed user-facing app to **Jerry FieldPlans** (`JerryFieldPlans.xcodeproj`,
+  target/product `JerryFieldPlans`, bundle id `com.jerry.fieldplans`, display
+  name) so it can't collide with the owner's other FieldPlan project.
+  Internal source folder and package names unchanged.
+- Automatic room labeling: RoomPlan section labels bridged through, plus
+  fixture-based inference in the core (tub→Bathroom, bed→Bedroom, stove→
+  Kitchen, tiny toilet-only room→Powder Room, tiny empty room→Closet) with
+  per-level numbered auto-names; scan flow naming is now optional.
+- CubiCasa-style room labels on the plan: name / `W × D` (oriented bounding
+  box aligned to the longest wall) / area, with fit-based line dropping.
+- Use Current Address on the project form (CoreLocation + reverse geocoding,
+  explicit user action only; location usage key added).
+- Client PDF now pairs each level's 2D plan with a 3D dollhouse render on the
+  same page (offscreen SCNRenderer) plus a per-level "Total: X sq ft" line;
+  standalone 3D PNG export added; dollhouse materials restyled (wood floors,
+  tile in wet rooms, white built-ins, warm furniture).
+- Core suite now 105 tests, all passing on Linux; plan output re-rendered and
+  visually reviewed with the new labels.

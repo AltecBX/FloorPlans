@@ -286,8 +286,9 @@ struct ScanFlowView: View {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("Captured this session")
                             .font(.headline)
-                        ForEach(coordinator.acceptedRoomNames, id: \.self) { name in
-                            Label(name, systemImage: "checkmark.circle.fill")
+                        ForEach(Array(coordinator.acceptedRoomNames.enumerated()), id: \.offset) { index, name in
+                            Label(name.isEmpty ? "Room \(index + 1) — will auto-label" : name,
+                                  systemImage: "checkmark.circle.fill")
                                 .foregroundStyle(.green)
                         }
                     }
@@ -341,8 +342,10 @@ struct ScanFlowView: View {
         }
         .sheet(isPresented: $showNameSheet) {
             RoomNameSheet(roomName: $roomName, roomType: $roomType) {
-                let name = roomName.trimmingCharacters(in: .whitespaces)
-                coordinator.startRoom(named: name.isEmpty ? defaultRoomName() : name)
+                // Blank name = auto-label from the scan (room type detection
+                // plus fixtures found inside), CubiCasa-style.
+                coordinator.startRoom(named: roomName.trimmingCharacters(in: .whitespaces))
+                roomName = ""
             }
             .presentationDetents([.medium])
         }
@@ -377,7 +380,7 @@ struct ScanFlowView: View {
                 switch coordinator.phase {
                 case .scanning:
                     VStack(spacing: 10) {
-                        Text("\(coordinator.currentRoomName) — \(coordinator.liveWallCount) walls detected")
+                        Text("\(coordinator.currentRoomName.isEmpty ? "Scanning" : coordinator.currentRoomName) — \(coordinator.liveWallCount) walls detected")
                             .font(.subheadline)
                             .padding(.horizontal, 12)
                             .padding(.vertical, 6)
@@ -450,10 +453,6 @@ struct ScanFlowView: View {
         }
     }
 
-    private func defaultRoomName() -> String {
-        "Room \(coordinator.acceptedRooms.count + 1)"
-    }
-
     /// Persists everything: raw scans, USDZ, converted geometry (spec §8, §10).
     private func finishLevel() async {
         guard let snapshot, let levelID = selectedLevelID ?? snapshot.levels.first?.id else { return }
@@ -483,7 +482,8 @@ struct ScanFlowView: View {
                 AppLog.scan.error("USDZ export failed: \(error.localizedDescription)")
             }
             let record = ScanRecord(
-                id: scanID, levelID: levelID, roomName: name,
+                id: scanID, levelID: levelID,
+                roomName: name.isEmpty ? "Auto-labeled room" : name,
                 rawDataFileName: rawName, usdzFileName: usdzName)
             record.project = project
             context.insert(record)
@@ -501,8 +501,12 @@ struct ScanFlowView: View {
             }
         }
 
-        // 3. Convert to canonical geometry and merge into the level.
-        let dtos = coordinator.acceptedRooms.map { CapturedRoomBridge.dto(from: $0.room, name: $0.name) }
+        // 3. Convert to canonical geometry and merge into the level. Rooms
+        // scanned without a name are auto-labeled from RoomPlan's own room
+        // classification or the fixtures found inside (Bedroom, Bathroom, …).
+        let dtos = coordinator.acceptedRooms.map {
+            CapturedRoomBridge.dto(from: $0.room, name: $0.name.isEmpty ? nil : $0.name)
+        }
         let conversion = ScanConversion.convert(rooms: dtos)
         for warning in conversion.warnings {
             AppLog.geometry.warning("\(warning, privacy: .public)")
@@ -530,7 +534,9 @@ struct ScanFlowView: View {
     }
 }
 
-/// Room naming sheet shown before each room scan (spec §8, §9).
+/// Room naming sheet shown before each room scan (spec §8, §9). Naming is
+/// optional: left blank, the room is auto-labeled from the scan itself
+/// (room type detection + recognized fixtures) with per-level numbering.
 struct RoomNameSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Binding var roomName: String
@@ -540,22 +546,26 @@ struct RoomNameSheet: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Room") {
-                    TextField("Name (e.g. Primary Bedroom)", text: $roomName)
+                Section {
+                    TextField("Name (optional — e.g. Primary Bedroom)", text: $roomName)
                         .textInputAutocapitalization(.words)
                     Picker("Type", selection: $roomType) {
                         ForEach(RoomType.allCases, id: \.self) { Text($0.displayName).tag($0) }
                     }
+                } header: {
+                    Text("Room")
+                } footer: {
+                    Text("Leave the name blank and the room labels itself from what the scan finds — a room with a tub becomes Bathroom, one with a bed becomes Bedroom, duplicates are numbered.")
                 }
                 Section {
                     Button {
-                        if roomName.trimmingCharacters(in: .whitespaces).isEmpty {
-                            roomName = roomType.displayName
-                        }
                         dismiss()
                         onStart()
                     } label: {
-                        Label("Begin Scan", systemImage: "camera.viewfinder")
+                        Label(roomName.trimmingCharacters(in: .whitespaces).isEmpty
+                                ? "Begin Scan (Auto-Label)"
+                                : "Begin Scan",
+                              systemImage: "camera.viewfinder")
                             .frame(maxWidth: .infinity)
                     }
                     .font(.headline)
@@ -569,6 +579,7 @@ struct RoomNameSheet: View {
                 }
             }
             .onChange(of: roomType) { _, newType in
+                // Picking a type explicitly fills the name; typing wins.
                 if roomName.isEmpty { roomName = newType.displayName }
             }
         }

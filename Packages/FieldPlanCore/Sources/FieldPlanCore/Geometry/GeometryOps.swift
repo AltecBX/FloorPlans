@@ -191,6 +191,39 @@ public enum GeometryOps {
         return bestDist > 0 ? best : c
     }
 
+    /// Room dimensions as an oriented bounding box aligned to the polygon's
+    /// longest edge — the "11' 5\" × 12' 0\"" figures shown under room names.
+    /// Returns (extent along the longest edge, perpendicular extent).
+    public static func orientedDimensions(_ polygon: [Vec2]) -> (width: Double, depth: Double)? {
+        let n = polygon.count
+        guard n >= 3 else { return nil }
+        var bestDir = Vec2(1, 0)
+        var bestLength = 0.0
+        for i in 0..<n {
+            let edge = polygon[(i + 1) % n] - polygon[i]
+            let length = edge.length
+            if length > bestLength {
+                bestLength = length
+                bestDir = edge / length
+            }
+        }
+        guard bestLength > 1e-9 else { return nil }
+        let perp = bestDir.perpendicular
+        var minU = Double.greatestFiniteMagnitude
+        var maxU = -Double.greatestFiniteMagnitude
+        var minV = Double.greatestFiniteMagnitude
+        var maxV = -Double.greatestFiniteMagnitude
+        for p in polygon {
+            let u = p.dot(bestDir)
+            let v = p.dot(perp)
+            minU = Swift.min(minU, u)
+            maxU = Swift.max(maxU, u)
+            minV = Swift.min(minV, v)
+            maxV = Swift.max(maxV, v)
+        }
+        return (maxU - minU, maxV - minV)
+    }
+
     /// True when any two non-adjacent edges of the polygon intersect.
     public static func polygonSelfIntersects(_ polygon: [Vec2]) -> Bool {
         let n = polygon.count

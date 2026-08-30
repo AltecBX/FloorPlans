@@ -111,7 +111,7 @@ struct SettingsScreen: View {
                 }
 
                 Section("Privacy") {
-                    Text("FieldPlan stores every project, scan and photo on this device only. No analytics, no ads, no cloud uploads. Sharing happens only when you export a file yourself.")
+                    Text("\(AppInfo.appName) stores every project, scan and photo on this device only. No analytics, no ads, no cloud uploads. The one network call is Apple's geocoding service, used only when you tap Use Current Address on a project. Sharing happens only when you export a file yourself.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }

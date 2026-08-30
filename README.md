@@ -1,17 +1,36 @@
-# FieldPlan
+# Jerry FieldPlans
 
 A private, offline-first iPhone app for renovation contractors: walk a
-property, scan rooms with LiDAR, correct the plan, photograph and measure
-everything, mark up the proposed renovation, and leave with a client-ready
-PDF, quantity takeoff and CAD-compatible exports.
+property, scan rooms with LiDAR, get an auto-labeled plan with room
+dimensions, correct anything, photograph and measure everything, mark up the
+proposed renovation, and leave with a client-ready PDF (2D plan + 3D
+dollhouse on the same page), quantity takeoff and CAD-compatible exports.
 
 Built with Swift, SwiftUI, RoomPlan, ARKit, SceneKit, SwiftData, PDFKit and
 QuickLook. No accounts, no cloud, no analytics — everything stays on the
 device (see [Privacy](#privacy)).
 
+Highlights inspired by professional scanning workflows:
+
+- **Automatic room labels** — scanned rooms name themselves (RoomPlan's room
+  detection plus fixture inference: a tub means Bathroom, a bed means
+  Bedroom), with numbering for duplicates. Type a name only when you want to.
+- **Room dimensions on the plan** — every room shows `11' 5" × 12' 0"` and
+  its area under the name, CubiCasa-style.
+- **Use Current Address** — one tap on the project form fills the property
+  address from where you're standing; you add the apartment number.
+- **2D + 3D together** — the client PDF pairs each level's 2D plan with a
+  3D dollhouse render on the same page, plus a standalone 3D PNG export.
+
+> Internal names: the source folder is `FieldPlan/` and the engine package is
+> `FieldPlanCore` — deliberately unchanged so code history stays clean. The
+> app's product, bundle id (`com.jerry.fieldplans`) and every user-visible
+> surface say **Jerry FieldPlans**, so it won't collide with any other
+> FieldPlan project in Xcode.
+
 ## Opening the project
 
-1. Open `FieldPlan.xcodeproj` in **Xcode 15.4 or newer** (Xcode 16+/26
+1. Open `JerryFieldPlans.xcodeproj` in **Xcode 15.4 or newer** (Xcode 16+/26
    recommended) on macOS.
 2. Select the FieldPlan target → Signing & Capabilities → choose your
    personal team (automatic signing).
@@ -27,7 +46,7 @@ editing, takeoff, reports and exports without a device or a property.
 | Path | What it is |
 |---|---|
 | `FieldPlan/` | The iOS app (SwiftUI, SwiftData, RoomPlan adapter, editors, 3D, reports) |
-| `FieldPlan.xcodeproj` | Xcode project (synchronized folders — files added to `FieldPlan/` are picked up automatically) |
+| `JerryFieldPlans.xcodeproj` | Xcode project (synchronized folders — files added to `FieldPlan/` are picked up automatically) |
 | `Packages/FieldPlanCore/` | Platform-independent engine: geometry, wall graph, units, editing, QA, takeoff, plan generation, exports |
 | `Docs/` | Architecture and device-testing notes |
 | `BUILD_STATUS.md` | Current implementation status per phase |
@@ -69,8 +88,9 @@ and SVG output, JSON schema round-trips and the `.fieldplan` ZIP package.
 
 All projects, scans, photos and measurements are stored locally
 (SwiftData + Application Support files). There are no analytics or
-advertising SDKs, no telemetry, and no network calls. Data leaves the device
-only when you explicitly share an export.
+advertising SDKs and no telemetry. The only network use is Apple's
+geocoding service, and only at the moment you tap **Use Current Address**.
+Data leaves the device only when you explicitly share an export.
 
 ## License / use
 

@@ -295,6 +295,8 @@ struct ProjectFormView: View {
     @State private var clientPhone = ""
     @State private var clientEmail = ""
     @State private var notes = ""
+    @StateObject private var addressService = LocationAddressService()
+    @State private var addressError: String? = nil
 
     var body: some View {
         NavigationStack {
@@ -316,6 +318,30 @@ struct ProjectFormView: View {
                 Section("Property") {
                     TextField("Address", text: $address)
                         .textContentType(.fullStreetAddress)
+                    Button {
+                        addressService.requestAddress { result in
+                            switch result {
+                            case .success(let found):
+                                address = found
+                                if name.trimmingCharacters(in: .whitespaces).isEmpty {
+                                    // Street line makes a natural project name.
+                                    name = found.components(separatedBy: ",").first ?? found
+                                }
+                            case .failure(let error):
+                                addressError = error.localizedDescription
+                            }
+                        }
+                    } label: {
+                        if addressService.isWorking {
+                            HStack {
+                                ProgressView()
+                                Text("Finding address…")
+                            }
+                        } else {
+                            Label("Use Current Address", systemImage: "location.fill")
+                        }
+                    }
+                    .disabled(addressService.isWorking)
                     TextField("Apartment / unit", text: $unit)
                 }
                 Section("Client") {
@@ -346,6 +372,11 @@ struct ProjectFormView: View {
                 }
             }
             .onAppear(perform: load)
+            .alert("Address Lookup", isPresented: .constant(addressError != nil)) {
+                Button("OK") { addressError = nil }
+            } message: {
+                Text(addressError ?? "")
+            }
         }
     }
 

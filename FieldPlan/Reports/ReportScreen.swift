@@ -32,6 +32,7 @@ struct ReportScreen: View {
             Section("Plan Options") {
                 Toggle("Dimensions on plans", isOn: $options.planDimensions)
                 Toggle("Furniture on plans", isOn: $options.planFurniture)
+                Toggle("3D dollhouse with each plan", isOn: $options.include3D)
             }
             Section {
                 Button {

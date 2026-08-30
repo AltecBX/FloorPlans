@@ -165,6 +165,43 @@ public enum ScanConversion {
         return .other
     }
 
+    /// Automatic room classification from what the scanner recognized inside
+    /// the room. Used when neither the user nor the scanner supplied a label,
+    /// so every room still arrives named on the plan (CubiCasa-style).
+    public static func inferRoomType(objectNames: [String], floorArea: Double? = nil) -> RoomType? {
+        let names = Set(objectNames.map { $0.lowercased() })
+        // Wet rooms first — their fixtures are unambiguous.
+        if names.contains("toilet") || names.contains("bathtub") || names.contains("shower") {
+            if let area = floorArea, area < 3.0, !names.contains("bathtub"), !names.contains("shower") {
+                return .powderRoom
+            }
+            return .bathroom
+        }
+        if names.contains("stove") || names.contains("oven") || names.contains("dishwasher")
+            || names.contains("refrigerator") {
+            return .kitchen
+        }
+        if names.contains("washerdryer") { return .laundry }
+        if names.contains("bed") { return .bedroom }
+        if names.contains("sofa") { return .livingRoom }
+        if names.contains("fireplace") || names.contains("television") { return .livingRoom }
+        if names.contains("table") && names.contains("chair") { return .diningRoom }
+        if names.contains("stairs") { return .stairHall }
+        if let area = floorArea, area < 4.0, names.isEmpty || names == ["storage"] {
+            return .closet
+        }
+        return nil
+    }
+
+    /// Next available auto name for a room type: "Bedroom", "Bedroom 2", ….
+    public static func autoName(for type: RoomType, avoiding existing: Set<String>) -> String {
+        let base = type == .other ? "Room" : type.displayName
+        if !existing.contains(base) { return base }
+        var n = 2
+        while existing.contains("\(base) \(n)") { n += 1 }
+        return "\(base) \(n)"
+    }
+
     /// Result of converting one or more scanned rooms into canonical geometry.
     public struct ConversionResult: Sendable {
         public var rooms: [RoomShape] = []
@@ -292,10 +329,23 @@ public enum ScanConversion {
             let heights = roomWalls.map(\.height).sorted()
             let ceiling = heights.isEmpty ? nil : heights[heights.count / 2]
 
+            // Room classification: scanner's own label first, then inference
+            // from the fixtures found inside the room.
+            var type = roomType(forSuggestion: scanned.suggestedType)
+            if type == .other {
+                let floorArea = polygon.count >= 3 ? GeometryOps.area(polygon) : nil
+                type = inferRoomType(
+                    objectNames: scanned.objects.map(\.categoryName),
+                    floorArea: floorArea
+                ) ?? .other
+            }
+
             let room = RoomShape(
                 id: scanned.id,
-                name: scanned.suggestedName ?? "Room \(result.rooms.count + 1)",
-                type: roomType(forSuggestion: scanned.suggestedType),
+                // Empty name = auto-name during merge, once the level's
+                // existing room names are known ("Bedroom 2", "Bathroom"…).
+                name: scanned.suggestedName ?? "",
+                type: type,
                 polygon: polygon,
                 ceilingHeight: ceiling,
                 ceilingHeightSource: .lidarScanned,
@@ -350,6 +400,13 @@ public enum ScanConversion {
         result.rooms.append(contentsOf: conversion.rooms)
         result.walls.append(contentsOf: conversion.walls)
         result.fixtures.append(contentsOf: conversion.fixtures)
+
+        // Auto-name rooms captured without a user-entered name, numbering
+        // duplicates per level: Bedroom, Bedroom 2, Bathroom, …
+        for i in result.rooms.indices where result.rooms[i].name.isEmpty {
+            let taken = Set(result.rooms.filter { !$0.name.isEmpty }.map(\.name))
+            result.rooms[i].name = autoName(for: result.rooms[i].type, avoiding: taken)
+        }
         return result
     }
 

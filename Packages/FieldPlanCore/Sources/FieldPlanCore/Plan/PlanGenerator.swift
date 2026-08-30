@@ -7,6 +7,8 @@ public enum PlanGenerator {
         public var mode: PlanRenderMode = .existing
         public var showDimensions = true
         public var showRoomLabels = true
+        /// "11' 5\" × 12' 0\"" under each room name (CubiCasa-style).
+        public var showRoomDimensions = true
         public var showAreaLabels = true
         public var showFixtures = true
         public var showFurniture = false
@@ -127,7 +129,7 @@ public enum PlanGenerator {
             for p in dimmed { add(p, to: .dimensions) }
         }
 
-        // ---- Room labels ----
+        // ---- Room labels (name / W×D / area, CubiCasa-style) ----
         if options.showRoomLabels {
             for room in level.rooms {
                 guard includeElement(room.changeStatus, mode: mode) else { continue }
@@ -135,10 +137,9 @@ public enum PlanGenerator {
                 let at = room.labelPoint
                 let name = room.name.uppercased()
 
-                // Fit the label to the room: shrink until the estimated text
-                // width fits, and drop the area line (then the whole label)
-                // for rooms too small to carry it. ~0.62 × height per glyph
-                // approximates the system font's average advance.
+                // Fit the name to the room: shrink until the estimated text
+                // width fits (~0.62 × height per glyph for the system font),
+                // and drop secondary lines for rooms too small to carry them.
                 let bounds = room.bounds
                 let maxWidth = max(bounds.width, 0.1) * 0.9
                 var height = options.labelTextHeight
@@ -147,27 +148,38 @@ public enum PlanGenerator {
                     height = maxWidth / (Double(max(name.count, 1)) * 0.62)
                 }
                 guard height >= 0.07 else { continue }
-                let showArea = options.showAreaLabels
-                    && height >= 0.11
-                    && bounds.height > height * 4
 
-                add(.text(
-                    string: name,
-                    position: Vec2(at.x, at.y + (showArea ? height * 0.75 : 0)),
-                    height: height,
-                    rotation: 0,
-                    anchor: .center,
-                    pen: .roomLabel
-                ), to: .labels)
-                if showArea {
+                // Secondary lines in priority order: dimensions, then area.
+                var lines: [(text: String, height: Double, pen: PlanPen)] = [
+                    (name, height, .roomLabel)
+                ]
+                var budget = bounds.height / (height * 1.6) // rough line capacity
+                if options.showRoomDimensions, height >= 0.10, budget > 2.5,
+                   let dims = GeometryOps.orientedDimensions(room.polygon) {
+                    lines.append((
+                        "\(options.formatter.length(dims.width)) × \(options.formatter.length(dims.depth))",
+                        height * 0.75, .areaLabel))
+                    budget -= 1
+                }
+                if options.showAreaLabels, height >= 0.11, budget > 2.5 {
+                    lines.append((options.formatter.area(room.floorArea), height * 0.68, .areaLabel))
+                }
+
+                // Stack the block centered on the label point.
+                let spacing = 1.45
+                let totalHeight = lines.reduce(0.0) { $0 + $1.height * spacing }
+                var y = at.y + totalHeight / 2
+                for line in lines {
+                    y -= line.height * spacing / 2
                     add(.text(
-                        string: options.formatter.area(room.floorArea),
-                        position: Vec2(at.x, at.y - height * 0.75),
-                        height: height * 0.7,
+                        string: line.text,
+                        position: Vec2(at.x, y),
+                        height: line.height,
                         rotation: 0,
                         anchor: .center,
-                        pen: .areaLabel
+                        pen: line.pen
                     ), to: .labels)
+                    y -= line.height * spacing / 2
                 }
             }
         }

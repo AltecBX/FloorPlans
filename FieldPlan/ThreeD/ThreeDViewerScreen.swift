@@ -429,7 +429,10 @@ enum ThreeDSceneBuilder {
         path.close()
         let shape = SCNShape(path: path, extrusionDepth: 0.08)
         let material = SCNMaterial()
-        material.diffuse.contents = UIColor(white: 0.8, alpha: 1)
+        // Warm wood tone; wet rooms get a cool tile tone.
+        material.diffuse.contents = room.type == .bathroom || room.type == .powderRoom || room.type == .laundry
+            ? UIColor(red: 0.84, green: 0.87, blue: 0.88, alpha: 1)
+            : UIColor(red: 0.85, green: 0.76, blue: 0.62, alpha: 1)
         shape.materials = [material]
         let node = SCNNode(geometry: shape)
         // Shape lies in its local XY plane extruded along Z; lay it flat so
@@ -454,9 +457,11 @@ enum ThreeDSceneBuilder {
         case .new where mode == .proposed:
             material.diffuse.contents = UIColor.systemBlue.withAlphaComponent(0.6)
         default:
+            // Presentation palette: soft warm furniture, near-white built-ins
+            // and appliances (reads like a staged dollhouse render).
             material.diffuse.contents = fixture.category.isFurniture
-                ? UIColor.systemBrown.withAlphaComponent(0.55)
-                : UIColor.systemTeal.withAlphaComponent(0.6)
+                ? UIColor(red: 0.80, green: 0.74, blue: 0.66, alpha: 0.95)
+                : UIColor(white: 0.96, alpha: 1)
         }
         geometry.materials = [material]
         let node = SCNNode(geometry: geometry)

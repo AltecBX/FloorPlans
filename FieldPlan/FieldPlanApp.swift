@@ -1,12 +1,13 @@
 import SwiftUI
 import SwiftData
 
-/// FieldPlan — contractor field measurement & floor plan capture.
+/// Jerry FieldPlans — contractor field measurement & floor plan capture.
 ///
 /// The app name is intentionally referenced through `AppInfo.appName` so it
-/// can be changed in one place.
+/// can be changed in one place. (Internal module and folder names remain
+/// "FieldPlan"/"FieldPlanCore"; only user-visible naming changes here.)
 enum AppInfo {
-    static let appName = "FieldPlan"
+    static let appName = "Jerry FieldPlans"
     static let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0"
 }
 

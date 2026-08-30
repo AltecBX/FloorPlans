@@ -96,10 +96,16 @@ enum CapturedRoomBridge {
                 confidenceLevel: confidenceLevel(object.confidence))
         }
 
+        // RoomPlan's own room classification (iOS 17 sections). The case name
+        // ("livingRoom", "bathroom", …) feeds FieldPlanCore's type mapping;
+        // when it's absent or unidentified, the core infers the type from the
+        // fixtures found in the room.
+        let sectionLabel: String? = room.sections.first.map { String(describing: $0.label) }
+
         return ScannedRoomDTO(
             id: room.identifier,
             suggestedName: name,
-            suggestedType: nil,
+            suggestedType: sectionLabel,
             surfaces: surfaces,
             objects: objects,
             capturedAt: Date()

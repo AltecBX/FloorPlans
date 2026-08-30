@@ -267,3 +267,76 @@ final class ScanConversionTests: XCTestCase {
         XCTAssertEqual(level.walls.count, wallCount)
     }
 }
+
+final class AutoLabelingTests: XCTestCase {
+
+    func testInferRoomTypeFromFixtures() {
+        XCTAssertEqual(ScanConversion.inferRoomType(objectNames: ["toilet", "sink", "bathtub"]), .bathroom)
+        XCTAssertEqual(ScanConversion.inferRoomType(objectNames: ["refrigerator", "stove", "sink"]), .kitchen)
+        XCTAssertEqual(ScanConversion.inferRoomType(objectNames: ["bed", "storage"]), .bedroom)
+        XCTAssertEqual(ScanConversion.inferRoomType(objectNames: ["sofa", "table", "television"]), .livingRoom)
+        XCTAssertEqual(ScanConversion.inferRoomType(objectNames: ["table", "chair"]), .diningRoom)
+        XCTAssertEqual(ScanConversion.inferRoomType(objectNames: ["washerDryer"]), .laundry)
+        XCTAssertNil(ScanConversion.inferRoomType(objectNames: ["chair"]))
+        // Tiny room with a toilet but no tub → powder room.
+        XCTAssertEqual(ScanConversion.inferRoomType(objectNames: ["toilet", "sink"], floorArea: 2.0), .powderRoom)
+        // Tiny empty room → closet.
+        XCTAssertEqual(ScanConversion.inferRoomType(objectNames: [], floorArea: 2.5), .closet)
+    }
+
+    func testAutoNameNumbering() {
+        XCTAssertEqual(ScanConversion.autoName(for: .bedroom, avoiding: []), "Bedroom")
+        XCTAssertEqual(ScanConversion.autoName(for: .bedroom, avoiding: ["Bedroom"]), "Bedroom 2")
+        XCTAssertEqual(ScanConversion.autoName(for: .bedroom, avoiding: ["Bedroom", "Bedroom 2"]), "Bedroom 3")
+        XCTAssertEqual(ScanConversion.autoName(for: .other, avoiding: ["Room"]), "Room 2")
+    }
+
+    /// Unnamed scanned rooms get inferred types and numbered names on merge.
+    func testMergeAutoNamesUnnamedRooms() {
+        func bedroomDTO(atX x: Double) -> ScannedRoomDTO {
+            func wallDTO(center: Vec3, axis: Vec3, width: Double) -> ScannedSurfaceDTO {
+                ScannedSurfaceDTO(kind: .wall, center: center, xAxis: axis, width: width, height: 2.5, confidenceLevel: 2)
+            }
+            return ScannedRoomDTO(
+                suggestedName: nil, suggestedType: nil,
+                surfaces: [
+                    wallDTO(center: Vec3(x + 2, 1.25, 0), axis: Vec3(1, 0, 0), width: 4),
+                    wallDTO(center: Vec3(x + 2, 1.25, -3), axis: Vec3(1, 0, 0), width: 4),
+                    wallDTO(center: Vec3(x, 1.25, -1.5), axis: Vec3(0, 0, -1), width: 3),
+                    wallDTO(center: Vec3(x + 4, 1.25, -1.5), axis: Vec3(0, 0, -1), width: 3),
+                ],
+                objects: [ScannedObjectDTO(
+                    categoryName: "bed", center: Vec3(x + 2, 0.3, -1.5),
+                    xAxis: Vec3(1, 0, 0), dimensions: Vec3(1.5, 0.6, 2.0), confidenceLevel: 2)])
+        }
+        let conversion = ScanConversion.convert(rooms: [bedroomDTO(atX: 0), bedroomDTO(atX: 5)])
+        let level = ScanConversion.merge(conversion, into: LevelGeometry(name: "L"))
+        let names = level.rooms.map(\.name).sorted()
+        XCTAssertEqual(names, ["Bedroom", "Bedroom 2"])
+        XCTAssertTrue(level.rooms.allSatisfy { $0.type == .bedroom })
+    }
+
+    func testOrientedDimensions() {
+        // Axis-aligned rectangle.
+        let rect = [Vec2(0, 0), Vec2(4, 0), Vec2(4, 3), Vec2(0, 3)]
+        let dims = GeometryOps.orientedDimensions(rect)!
+        XCTAssertEqual(dims.width, 4, accuracy: 1e-9)
+        XCTAssertEqual(dims.depth, 3, accuracy: 1e-9)
+        // Same rectangle rotated 30° — dimensions must not change.
+        let rotated = rect.map { $0.rotated(by: .pi / 6) }
+        let rotatedDims = GeometryOps.orientedDimensions(rotated)!
+        XCTAssertEqual(rotatedDims.width, 4, accuracy: 1e-6)
+        XCTAssertEqual(rotatedDims.depth, 3, accuracy: 1e-6)
+    }
+
+    func testRoomDimensionLabelOnPlan() {
+        let level = SampleFixtures.rectangularRoom(widthFeet: 12, depthFeet: 15, name: "Bedroom", type: .bedroom)
+        let scene = PlanGenerator.scene(for: level)
+        let labelTexts: [String] = scene.layer(.labels)!.primitives.compactMap {
+            if case .text(let s, _, _, _, _, _) = $0 { return s }
+            return nil
+        }
+        XCTAssertTrue(labelTexts.contains { $0.contains("×") }, "\(labelTexts)")
+        XCTAssertTrue(labelTexts.contains { $0.contains("15' 0\"") && $0.contains("12' 0\"") }, "\(labelTexts)")
+    }
+}

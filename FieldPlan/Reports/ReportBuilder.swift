@@ -18,6 +18,8 @@ struct ReportOptions {
     var includeDisclaimer = true
     var planDimensions = true
     var planFurniture = false
+    /// 3D dollhouse view on the same page as each 2D plan.
+    var include3D = true
 }
 
 /// Generates the professional PDF with UIGraphicsPDFRenderer. Layout is
@@ -274,7 +276,7 @@ enum ReportBuilder {
                     ])
             }
 
-            // ---- Plans ----
+            // ---- Plans (2D + 3D dollhouse on one page per level) ----
             func planPages(mode: PlanRenderMode, title: String) {
                 var generatorOptions = PlanGenerator.Options()
                 generatorOptions.mode = mode
@@ -285,13 +287,41 @@ enum ReportBuilder {
                     guard !(level.walls.isEmpty && level.rooms.isEmpty) else { continue }
                     composer.newPage()
                     composer.heading("\(title) — \(level.name)")
+
+                    let totalArea = level.rooms.reduce(0.0) { $0 + $1.floorArea }
+                    if totalArea > 0 {
+                        composer.text("Total: \(formatter.area(totalArea))",
+                                      font: UIFont.systemFont(ofSize: 11, weight: .semibold))
+                    }
+
+                    let threeD: UIImage? = (options.include3D && mode != .demolition)
+                        ? ThreeDSnapshot.render(levels: [level], mode: mode, showFurniture: true)
+                        : nil
+
+                    let available = composer.bottomLimit - composer.cursor - 16
+                    let planHeight = threeD != nil ? available * 0.55 : available
                     let planRect = CGRect(
                         x: margin, y: composer.cursor,
                         width: composer.contentWidth,
-                        height: composer.bottomLimit - composer.cursor - 18)
+                        height: planHeight)
                     let scene = PlanGenerator.scene(for: level, options: generatorOptions)
                     PlanImageRenderer.draw(scene, in: context.cgContext, rect: planRect)
-                    composer.cursor = planRect.maxY + 6
+                    composer.cursor = planRect.maxY + 4
+
+                    if let threeD {
+                        let maxHeight = composer.bottomLimit - composer.cursor - 14
+                        let scale = min(composer.contentWidth / threeD.size.width,
+                                        maxHeight / threeD.size.height)
+                        if scale > 0 {
+                            let size = CGSize(width: threeD.size.width * scale,
+                                              height: threeD.size.height * scale)
+                            threeD.draw(in: CGRect(
+                                x: margin + (composer.contentWidth - size.width) / 2,
+                                y: composer.cursor,
+                                width: size.width, height: size.height))
+                            composer.cursor += size.height + 4
+                        }
+                    }
                     composer.text(
                         "Fit-to-page plan — printed dimensions govern over graphic scale.",
                         font: Fonts.small, color: .gray)

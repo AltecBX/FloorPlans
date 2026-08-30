@@ -46,6 +46,7 @@ struct ExportScreen: View {
                 Toggle("Furniture", isOn: $includeFurniture)
 
                 exportButton("Floor Plan PNG", icon: "photo") { try exportPNG() }
+                exportButton("3D Dollhouse PNG", icon: "cube.fill") { try export3DPNG() }
                 exportButton("Floor Plan SVG (vector)", icon: "square.on.circle") { try exportSVG() }
                 exportButton("DXF for CAD", icon: "square.grid.3x3.square") { try exportDXF() }
             }
@@ -155,6 +156,18 @@ struct ExportScreen: View {
             throw ProjectStore.StoreError.importUnreadable("PNG encoding failed.")
         }
         let url = fileURL("\(level.name) \(mode.displayName).png")
+        try data.write(to: url, options: .atomic)
+        return url
+    }
+
+    private func export3DPNG() throws -> URL {
+        let level = try requireLevel()
+        let renderMode: PlanRenderMode = mode == .demolition ? .existing : mode
+        guard let image = ThreeDSnapshot.render(levels: [level], mode: renderMode, showFurniture: includeFurniture || includeFixtures),
+              let data = image.pngData() else {
+            throw ProjectStore.StoreError.importUnreadable("3D rendering is unavailable on this device.")
+        }
+        let url = fileURL("\(level.name) 3D.png")
         try data.write(to: url, options: .atomic)
         return url
     }
