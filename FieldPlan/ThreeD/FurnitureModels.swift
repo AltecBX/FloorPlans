@@ -75,7 +75,7 @@ enum FurnitureModels {
             add(width * 0.98, mattress, depth * 0.98,
                 y: baseHeight + mattress / 2, color: Palette.linen, chamfer: 0.04)
             add(width * 0.98, tall * 0.10, depth * 0.55,
-                z: depth * 0.20, y: baseHeight + mattress, color: Palette.cushion, chamfer: 0.03)
+                y: baseHeight + mattress, z: depth * 0.20, color: Palette.cushion, chamfer: 0.03)
             let pillowWidth = width * 0.40
             for side in [-1.0, 1.0] {
                 add(pillowWidth, tall * 0.13, depth * 0.16,
