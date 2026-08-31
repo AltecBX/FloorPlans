@@ -29,8 +29,14 @@ struct ReportOptions {
 enum ReportBuilder {
 
     // US Letter, 0.66" margins.
-    static let pageSize = CGSize(width: 612, height: 792)
-    static let margin: CGFloat = 48
+    //
+    // `nonisolated` because these are read by `Composer`, which is a nested
+    // type and so does not inherit this enum's main-actor isolation. They are
+    // immutable values of Sendable types, so reading them from any context is
+    // safe — and saying so here is what keeps the page geometry as plain
+    // constants instead of forcing Composer onto the main actor.
+    nonisolated static let pageSize = CGSize(width: 612, height: 792)
+    nonisolated static let margin: CGFloat = 48
 
     struct Fonts {
         static let title = UIFont.systemFont(ofSize: 30, weight: .bold)
