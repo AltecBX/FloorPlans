@@ -170,3 +170,32 @@ Driven by a marked-up reference plan from the owner, verified by rendering:
   cabinets with door fronts, appliances with handles and burners, stairs with
   real treads. Proportions stay exactly as scanned.
 - Core suite now 117 tests, all passing on Linux.
+
+## 2026-08-30 — First real scan (living room / hallway / bathroom / kitchen)
+
+The owner scanned four connected spaces on a LiDAR iPhone. Findings:
+
+- **The whole capture came back as one room called "Living Room."** RoomPlan
+  merges a continuous walk into a single `CapturedRoom`, and the converter made
+  one `RoomShape` per captured room, typed from every object at once. The rooms
+  were in the geometry all along: `ScanConversion.splitIntoRooms` now recovers
+  them from the wall graph's interior faces and types each from the fixtures
+  standing inside it, so a toilet makes a bathroom and a range makes a kitchen.
+- **Face detection needed planar walls first.** A partition ends against the
+  middle of an exterior wall, not at a corner, so the graph pruned it as a
+  dead-end stub and returned a single face for the whole floor.
+  `GeometryCleaner.splitAtJunctions` cuts walls where another wall's endpoint
+  lands mid-span (tolerating a partition that stops at the wall face rather
+  than its centreline). Four spaces → one face before, four faces after.
+- Room colour coding was never broken — with every room typed `livingRoom`
+  they were all correctly painted the same colour. It follows the fix above.
+- **3D fixtures**: the toilet and basin were cylinders, which read as white
+  blobs from above. Both are now oval in plan (a scaled cylinder section), the
+  toilet gaining a cistern, pedestal and seat, the basin a recess and a spout.
+- **Accuracy**: the scan path was audited for systematic error and adds none —
+  no endpoint snapping is applied, and the room outline comes straight from
+  RoomPlan's floor mesh (`GeometryOps.simplified` runs at a 1e-6 tolerance).
+  A 1–2 inch disagreement with a tape measure is RoomPlan's own accuracy. The
+  answer is correction, not smoothing: exact dimension editing preserves
+  `originalLength` and marks the wall `.edited`.
+- Core suite now 122 tests, all passing on Linux.

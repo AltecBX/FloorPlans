@@ -193,6 +193,68 @@ public enum ScanConversion {
         return nil
     }
 
+    /// Splits a captured space into the rooms it actually contains.
+    ///
+    /// RoomPlan merges a continuous walk into ONE captured room: scanning a
+    /// living room, hallway, bathroom and kitchen in a single pass arrives as
+    /// one 400-sq-ft space, classified from every object at once — which is why
+    /// the whole apartment came back labelled "Living Room".
+    ///
+    /// The rooms are in the geometry, though. The wall graph's interior faces
+    /// *are* the enclosed spaces, so each face becomes a room and is typed from
+    /// the fixtures standing inside that face: a toilet makes a bathroom, a
+    /// range makes a kitchen. Fixtures are reassigned to the room that contains
+    /// them so per-room quantities follow.
+    ///
+    /// Conservative by design: if the walls do not close into more faces than
+    /// there are rooms already (a single room, or a scan with gaps), the level
+    /// is returned untouched rather than losing rooms to a failed detection.
+    public static func splitIntoRooms(_ level: LevelGeometry, minimumArea: Double = 0.8) -> LevelGeometry {
+        // Partitions meet exterior walls mid-span, so the walls have to be cut
+        // at those junctions before the graph can see the enclosed spaces.
+        let planar = GeometryCleaner.splitAtJunctions(level.walls)
+        let faces = WallGraph(walls: planar).interiorFaces(minArea: minimumArea)
+        guard faces.count > level.rooms.count else { return level }
+
+        var result = level
+        var rooms: [RoomShape] = []
+        for face in faces {
+            let contained = level.fixtures.filter { GeometryOps.polygonContains(face, $0.center) }
+            let area = GeometryOps.area(face)
+            let type = inferRoomType(
+                objectNames: contained.map { $0.category.rawValue },
+                floorArea: area) ?? .other
+
+            // Walls bounding this face, and the ceiling height they agree on.
+            let bounding = level.walls.filter {
+                GeometryOps.distanceToPolygonBoundary(face, $0.midpoint) <= $0.thickness / 2 + 0.10
+            }
+            let heights = bounding.map(\.height).sorted()
+            // Carry provenance from whichever scanned room covered this face.
+            let origin = level.rooms.first { GeometryOps.polygonContains($0.polygon, GeometryOps.centroid(face)) }
+
+            rooms.append(RoomShape(
+                // Empty name: `merge` numbers them once every type is known.
+                name: "",
+                type: type,
+                polygon: face,
+                ceilingHeight: heights.isEmpty ? origin?.ceilingHeight : heights[heights.count / 2],
+                ceilingHeightSource: origin?.ceilingHeightSource ?? .lidarScanned,
+                wallIDs: bounding.map(\.id),
+                sourceScanID: origin?.sourceScanID,
+                changeStatus: .existing))
+        }
+
+        result.rooms = rooms
+        for index in result.fixtures.indices {
+            let center = result.fixtures[index].center
+            result.fixtures[index].roomID = rooms.first {
+                GeometryOps.polygonContains($0.polygon, center)
+            }?.id
+        }
+        return result
+    }
+
     /// Next available auto name for a room type: "Bedroom", "Bedroom 2", ….
     public static func autoName(for type: RoomType, avoiding existing: Set<String>) -> String {
         let base = type == .other ? "Room" : type.displayName
@@ -403,6 +465,10 @@ public enum ScanConversion {
         result.rooms.append(contentsOf: conversion.rooms)
         result.walls.append(contentsOf: conversion.walls)
         result.fixtures.append(contentsOf: conversion.fixtures)
+
+        // A single capture usually covers several rooms; recover them from the
+        // wall graph so each is typed and named on its own fixtures.
+        result = splitIntoRooms(result)
 
         // Auto-name rooms captured without a user-entered name, numbering
         // duplicates per level: Bedroom, Bedroom 2, Bathroom, …

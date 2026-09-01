@@ -55,14 +55,19 @@ enum FurnitureModels {
             root.addChildNode(node)
         }
 
+        /// `stretchZ` turns the circular section into an oval. A toilet bowl and
+        /// a wash basin are longer front-to-back than they are wide, and that
+        /// silhouette is what makes them readable from above — a plain cylinder
+        /// just reads as a white blob at dollhouse scale.
         func addCylinder(radius: Double, height h: Double,
                          x: Double = 0, y: Double, z: Double = 0,
-                         color: UIColor) {
+                         stretchZ: Double = 1, color: UIColor) {
             let geometry = SCNCylinder(radius: CGFloat(max(radius, 0.005)),
                                        height: CGFloat(max(h, 0.005)))
             geometry.materials = [material(override ?? color)]
             let node = SCNNode(geometry: geometry)
             node.position = SCNVector3(Float(x), Float(y), Float(z))
+            node.scale = SCNVector3(1, 1, Float(max(stretchZ, 0.05)))
             root.addChildNode(node)
         }
 
@@ -119,13 +124,18 @@ enum FurnitureModels {
             }
 
         case .toilet:
-            // Tank against the back (-Z), bowl in front, seat on top.
-            add(width * 0.62, tall * 0.55, depth * 0.24,
-                y: tall * 0.45, z: -depth * 0.36, color: Palette.porcelain, chamfer: 0.03)
-            add(width * 0.52, tall * 0.42, depth * 0.62,
-                y: tall * 0.21, z: depth * 0.10, color: Palette.porcelain, chamfer: 0.08)
-            add(width * 0.56, tall * 0.06, depth * 0.58,
-                y: tall * 0.45, z: depth * 0.10, color: Palette.linen, chamfer: 0.06)
+            // Cistern against the back wall, a pedestal, then an oval bowl and
+            // seat in front of it — the shape you recognise looking down.
+            add(width * 0.60, tall * 0.58, depth * 0.20,
+                y: tall * 0.46, z: -depth * 0.38, color: Palette.porcelain, chamfer: 0.03)
+            add(width * 0.30, tall * 0.40, depth * 0.30,
+                y: tall * 0.20, z: depth * 0.02, color: Palette.porcelain, chamfer: 0.04)
+            addCylinder(radius: width * 0.26, height: tall * 0.22,
+                        y: tall * 0.50, z: depth * 0.10, stretchZ: 1.35,
+                        color: Palette.porcelain)
+            addCylinder(radius: width * 0.27, height: tall * 0.05,
+                        y: tall * 0.62, z: depth * 0.10, stretchZ: 1.35,
+                        color: Palette.linen)
 
         case .bathtub:
             // Apron and rim with a recessed basin: four walls plus a floor,
@@ -146,14 +156,21 @@ enum FurnitureModels {
                         y: tall * 0.92, z: -depth * 0.30, color: Palette.metal)
 
         case .sink, .vanity:
-            // Cabinet, counter slab, basin sunk into it, tap at the back.
+            // Cabinet, counter slab, an oval basin recessed into it, and a tap
+            // with a spout so it reads as a sink rather than a box with a hole.
             let counter = 0.04
             add(width, tall - counter, depth, y: (tall - counter) / 2, color: Palette.cabinet)
             add(width, counter, depth, y: tall - counter / 2, color: Palette.counter, chamfer: 0.005)
-            addCylinder(radius: min(width, depth) * 0.28, height: counter * 1.4,
-                        y: tall, color: Palette.porcelain)
-            addCylinder(radius: min(width, depth) * 0.035, height: 0.16,
-                        y: tall + 0.08, z: -depth * 0.30, color: Palette.metal)
+            addCylinder(radius: min(width, depth) * 0.30, height: counter * 0.9,
+                        y: tall - counter * 0.2, z: depth * 0.04, stretchZ: 1.25,
+                        color: Palette.porcelain)
+            addCylinder(radius: min(width, depth) * 0.24, height: counter * 0.7,
+                        y: tall - counter * 0.5, z: depth * 0.04, stretchZ: 1.25,
+                        color: UIColor(white: 0.88, alpha: 1))
+            addCylinder(radius: min(width, depth) * 0.030, height: 0.16,
+                        y: tall + 0.08, z: -depth * 0.32, color: Palette.metal)
+            add(min(width, depth) * 0.05, 0.02, depth * 0.16,
+                y: tall + 0.15, z: -depth * 0.24, color: Palette.metal, chamfer: 0.008)
 
         case .cabinetBase, .island, .countertop:
             let counter = 0.04

@@ -256,6 +256,52 @@ public enum GeometryCleaner {
 
     /// Removes walls shorter than `minLength` that are almost certainly scan
     /// noise. Never removes walls that carry openings.
+    /// Splits walls where another wall's endpoint lands mid-span, so the graph
+    /// is planar and the face walk can find the enclosed rooms.
+    ///
+    /// A scan hands back whole wall surfaces: a partition between two rooms
+    /// ends against the middle of an exterior wall, not at one of its corners.
+    /// To the graph that partition is a dead-end stub, it gets pruned, and the
+    /// whole floor comes back as one face — which is exactly how four scanned
+    /// spaces became a single 400-sq-ft "Living Room".
+    ///
+    /// `tolerance` allows for a partition stopping at the *face* of the wall it
+    /// meets rather than its centreline, roughly half a wall thickness.
+    /// Openings are dropped from the split copies: this exists to build a graph
+    /// for room detection, not to edit the plan's real walls.
+    public static func splitAtJunctions(_ walls: [Wall], tolerance: Double = 0.15) -> [Wall] {
+        let endpoints = walls.flatMap { [$0.start, $0.end] }
+        var out: [Wall] = []
+        for wall in walls {
+            let length = wall.length
+            guard length > tolerance * 2 else { out.append(wall); continue }
+            let direction = wall.direction
+
+            var cuts: [Double] = []
+            for point in endpoints {
+                let offset = point - wall.start
+                let along = offset.dot(direction)
+                guard along > tolerance, along < length - tolerance else { continue }
+                if abs(offset.cross(direction)) <= tolerance { cuts.append(along) }
+            }
+            guard !cuts.isEmpty else { out.append(wall); continue }
+
+            var stops: [Double] = [0]
+            for cut in cuts.sorted() where cut - (stops.last ?? 0) > tolerance { stops.append(cut) }
+            if length - (stops.last ?? 0) > tolerance { stops.append(length) } else { stops[stops.count - 1] = length }
+
+            for index in 0..<(stops.count - 1) {
+                var segment = wall
+                segment.id = UUID()
+                segment.start = wall.start + direction * stops[index]
+                segment.end = wall.start + direction * stops[index + 1]
+                segment.openings = []
+                out.append(segment)
+            }
+        }
+        return out
+    }
+
     public static func removeTinyWalls(_ walls: [Wall], minLength: Double = 0.05) -> [Wall] {
         walls.filter { $0.length >= minLength || !$0.openings.isEmpty }
     }
