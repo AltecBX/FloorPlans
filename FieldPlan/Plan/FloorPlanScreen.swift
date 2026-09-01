@@ -14,6 +14,7 @@ struct FloorPlanScreen: View {
     @State private var mode: PlanRenderMode = .existing
     @State private var compareSideBySide = false
     @State private var showDimensions = false
+    @State private var showCeilingHeights = false
     @State private var showFurniture = false
     @State private var showFixtures = true
     @State private var showLabels = true
@@ -38,6 +39,7 @@ struct FloorPlanScreen: View {
         options.showFixtures = showFixtures
         options.showRoomLabels = showLabels
         options.showAreaLabels = showLabels
+        options.showCeilingHeights = showCeilingHeights
         options.showAnnotations = showAnnotations
         options.formatter = SettingsStore.shared.formatter
         return PlanGenerator.scene(for: level, options: options)
@@ -135,6 +137,7 @@ struct FloorPlanScreen: View {
         Menu {
             Toggle("Dimensions", isOn: $showDimensions)
             Toggle("Room Labels", isOn: $showLabels)
+            Toggle("Ceiling Heights", isOn: $showCeilingHeights)
             Toggle("Fixtures", isOn: $showFixtures)
             Toggle("Furniture", isOn: $showFurniture)
             Toggle("Notes", isOn: $showAnnotations)

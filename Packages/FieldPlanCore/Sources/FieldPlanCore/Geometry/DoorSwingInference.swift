@@ -109,10 +109,21 @@ public enum DoorSwingInference {
         }
     }
 
-    /// The leaf should end up against a wall, not across the room. For each
-    /// jamb, look at where the leaf tip would land when open and measure how
-    /// far that is from the served room's edge; hinge on the side that parks
-    /// the leaf closest to a boundary.
+    /// Which jamb carries the hinges.
+    ///
+    /// The rule a drafter uses is about the corner, not the room: hinge on the
+    /// jamb nearer the wall's end, so the open leaf lies back along the
+    /// adjacent wall instead of standing out into the middle of the space. A
+    /// bathroom door tight to a corner hinges on the corner side — that is the
+    /// case a "swings into the smaller room" rule alone gets wrong.
+    ///
+    /// Only when the opening sits genuinely mid-wall (both jambs a similar
+    /// distance from a corner) does the leaf's clearance inside the room it
+    /// serves decide it.
+    ///
+    /// Nothing in a LiDAR scan records the hinge side — RoomPlan reports the
+    /// hole in the wall, and reports it the same way whether the door was open
+    /// or shut — so this is inference, and the editor's flip is the last word.
     private static func hingesAtWallStart(
         opening: WallOpening,
         wall: Wall,
@@ -122,25 +133,24 @@ public enum DoorSwingInference {
     ) -> Bool {
         let direction = wall.direction
         let width = opening.width
+
+        // Distance from each jamb to its nearer end of the host wall.
+        let startGap = opening.startOffset
+        let endGap = wall.length - opening.endOffset
+        let decisive = max(width * 0.5, 0.15)
+        if abs(startGap - endGap) > decisive {
+            return startGap < endGap
+        }
+
+        // Centred in the wall: park the leaf where it clears the room best.
+        guard let room = servedRoom, room.polygon.count >= 3 else {
+            return startGap <= endGap
+        }
         let startJamb = wall.start + direction * opening.startOffset
         let endJamb = wall.start + direction * opening.endOffset
-
-        // Leaf tip when hinged at each jamb, opened 90° into the swing side.
-        let tipFromStart = startJamb + swingSide * width
-        let tipFromEnd = endJamb + swingSide * width
-
-        guard let room = servedRoom, room.polygon.count >= 3 else {
-            // No room to reason about: hinge on the jamb nearer the wall's end,
-            // which is usually where a perpendicular wall meets it.
-            return opening.centerOffset > wall.length / 2
-        }
-
-        let fromStart = GeometryOps.distanceToPolygonBoundary(room.polygon, tipFromStart)
-        let fromEnd = GeometryOps.distanceToPolygonBoundary(room.polygon, tipFromEnd)
-        if abs(fromStart - fromEnd) < 0.05 {
-            // Symmetric: fall back to the nearer wall end.
-            return opening.centerOffset > wall.length / 2
-        }
+        let fromStart = GeometryOps.distanceToPolygonBoundary(room.polygon, startJamb + swingSide * width)
+        let fromEnd = GeometryOps.distanceToPolygonBoundary(room.polygon, endJamb + swingSide * width)
+        if abs(fromStart - fromEnd) < 0.05 { return startGap <= endGap }
         return fromStart < fromEnd
     }
 }

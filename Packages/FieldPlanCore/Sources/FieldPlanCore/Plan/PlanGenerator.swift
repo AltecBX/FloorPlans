@@ -15,6 +15,10 @@ public enum PlanGenerator {
         /// Per-room area under the dimensions. Off by default: the totals
         /// belong in the title block, and a third line crowds a small room.
         public var showAreaLabels = false
+        /// Ceiling height under the room label ("CEILING 8' 0\""). Off by
+        /// default — it matters when pricing paint, drywall or trim, so it is
+        /// a switch on the plan rather than something you re-measure for.
+        public var showCeilingHeights = false
         public var showFixtures = true
         public var showFurniture = false
         public var showAnnotations = true
@@ -208,6 +212,15 @@ public enum PlanGenerator {
                     let areaHeight = height * 0.68
                     if fits(text, areaHeight) {
                         lines.append((text, areaHeight, .areaLabel))
+                        budget -= 1
+                    }
+                }
+                if options.showCeilingHeights, let ceiling = room.ceilingHeight,
+                   height >= 0.10, budget > 2.5 {
+                    let text = "CEILING \(options.formatter.length(ceiling))"
+                    let ceilingHeight = height * 0.62
+                    if fits(text, ceilingHeight) {
+                        lines.append((text, ceilingHeight, .areaLabel))
                     }
                 }
 
@@ -509,6 +522,10 @@ public enum PlanGenerator {
         case .cabinetBase, .countertop, .island:
             // Counter edge line, the way cabinet runs are drawn.
             emit(.line(a: local(-w / 2, d * 0.34), b: local(w / 2, d * 0.34), pen: pen))
+        case .mirror:
+            // A double line against the wall, the drafting convention.
+            emit(.line(a: local(-w / 2, -d * 0.18), b: local(w / 2, -d * 0.18), pen: pen))
+            emit(.line(a: local(-w / 2, d * 0.18), b: local(w / 2, d * 0.18), pen: pen))
         case .stairs:
             // Tread lines across the depth.
             let treads = max(2, Int(d / 0.28))

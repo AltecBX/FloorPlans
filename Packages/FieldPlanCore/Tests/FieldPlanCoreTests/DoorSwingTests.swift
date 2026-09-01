@@ -103,4 +103,35 @@ final class DoorSwingTests: XCTestCase {
                 .allSatisfy { $0.swing == DoorSwing(hingeAtStart: false, opensPositiveSide: false) },
             "a hand-set swing must never be overwritten")
     }
+
+    /// A bathroom door set near one end of its wall must hinge on the corner
+    /// side, so the open leaf lies back along the adjacent wall rather than
+    /// standing across the doorway. Getting this backwards is what put the
+    /// owner's bathroom door on the wrong jamb.
+    func testDoorNearACornerHingesOnTheCornerSide() {
+        let level = SampleFixtures.rectangularRoom(widthFeet: 6, depthFeet: 8,
+                                                   name: "Bath", type: .bathroom)
+        var wall = level.walls[0]
+        // Opening 3' wide whose near jamb sits 1' from the wall start.
+        let ft = UnitConstants.metersPerFoot
+        let opening = WallOpening(kind: .door, centerOffset: 2.5 * ft, width: 3 * ft,
+                                  height: 2.03, sillHeight: 0)
+        wall.openings = [opening]
+        var edited = level
+        edited.walls[0] = wall
+
+        let swing = DoorSwingInference.swing(for: opening, on: wall, in: edited)
+        XCTAssertTrue(swing.hingeAtStart,
+                      "the near jamb is 1' from the corner and the far jamb 4' — hinge at the near one")
+
+        // Mirror it: the same door near the far end hinges on that side instead.
+        let mirroredOpening = WallOpening(kind: .door, centerOffset: wall.length - 2.5 * ft,
+                                          width: 3 * ft, height: 2.03, sillHeight: 0)
+        var mirroredWall = level.walls[0]
+        mirroredWall.openings = [mirroredOpening]
+        var mirroredLevel = level
+        mirroredLevel.walls[0] = mirroredWall
+        let mirroredSwing = DoorSwingInference.swing(for: mirroredOpening, on: mirroredWall, in: mirroredLevel)
+        XCTAssertFalse(mirroredSwing.hingeAtStart)
+    }
 }

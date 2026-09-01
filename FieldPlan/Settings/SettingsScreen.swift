@@ -120,9 +120,17 @@ struct SettingsScreen: View {
                         .foregroundStyle(.secondary)
                 }
 
-                Section("About") {
+                Section {
                     LabeledContent("App", value: AppInfo.appName)
-                    LabeledContent("Version", value: AppInfo.version)
+                    LabeledContent("Version", value: AppInfo.versionAndBuild)
+                    LabeledContent("Updated", value: AppInfo.releaseDate)
+                    Text(AppInfo.releaseNotes)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                } header: {
+                    Text("About")
+                } footer: {
+                    Text("The build number changes with every update. If something looks wrong, quote the version above — it says exactly which build you are running.")
                 }
             }
             .navigationTitle("Settings")

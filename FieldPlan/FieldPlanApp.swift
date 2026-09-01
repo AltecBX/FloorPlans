@@ -9,6 +9,19 @@ import SwiftData
 enum AppInfo {
     static let appName = "Jerry FieldPlans"
     static let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0"
+    static let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "1"
+
+    /// What changed in this build, shown in Settings → About.
+    ///
+    /// Without this there is no way to tell a fresh build from the one before
+    /// it — the marketing version alone stays "1.0" forever, so a pull that
+    /// silently failed looks identical to one that worked. Both this and
+    /// `CURRENT_PROJECT_VERSION` are bumped on every push.
+    static let releaseDate = "August 30, 2026"
+    static let releaseNotes = "Rooms detected per space, corner-aware door hinges, ceiling heights on the plan, sharper 3D fixtures."
+
+    /// "1.1 (8)" — the string to quote when reporting a problem.
+    static var versionAndBuild: String { "\(version) (\(build))" }
 }
 
 @main

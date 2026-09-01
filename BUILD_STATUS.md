@@ -199,3 +199,28 @@ The owner scanned four connected spaces on a LiDAR iPhone. Findings:
   answer is correction, not smoothing: exact dimension editing preserves
   `originalLength` and marks the wall `.edited`.
 - Core suite now 122 tests, all passing on Linux.
+
+## 2026-08-30 — Build 8 (version 1.1), from bedroom/bathroom scan feedback
+
+- **The app now says which build it is.** Settings → About shows version and
+  build number, the release date and a one-line summary of what changed.
+  `MARKETING_VERSION` 1.1 / `CURRENT_PROJECT_VERSION` 8, both bumped every
+  push. Without this a pull that silently failed looked identical to one that
+  worked, and "the version still says 1.0" was the only signal available.
+- **Door hinge side now follows the corner, not the room.** The old rule chose
+  the jamb whose open leaf sat closest to the room boundary, which put a
+  bathroom door on the wrong jamb. A drafter hinges on the jamb nearer the
+  wall's end so the leaf lies back along the adjacent wall; that is now the
+  primary rule, with leaf clearance only breaking ties for genuinely centred
+  openings. Note RoomPlan reports the opening identically whether the door was
+  open or shut during the scan — hinge side is never in the capture data.
+- **Ceiling heights on the plan**: `PlanGenerator.Options.showCeilingHeights`
+  adds "CEILING 8' 0\"" under the room label, with a Ceiling Heights toggle in
+  the plan's layer menu.
+- **Mirror is a fixture category now** (`FixtureCategory.mirror`) with a plan
+  symbol and a 3D model. RoomPlan does not detect mirrors, so this exists to be
+  placed by hand in the editor.
+- **Small storage renders as a nightstand/dresser** — drawer fronts and pulls
+  below 0.85 m rather than shelves. RoomPlan reports nightstands as plain
+  "storage".
+- Core suite now 123 tests, all passing on Linux.

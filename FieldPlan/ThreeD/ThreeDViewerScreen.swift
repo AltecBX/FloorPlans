@@ -489,6 +489,7 @@ enum ThreeDSceneBuilder {
         case .television: return 0.7
         case .rangeHood: return 0.4
         case .sink: return 0.2
+        case .mirror: return 0.9
         case .soffit: return 0.3
         case .custom: return 0.9
         }

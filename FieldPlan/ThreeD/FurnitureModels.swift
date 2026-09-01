@@ -231,13 +231,34 @@ enum FurnitureModels {
                     color: Palette.wood, chamfer: 0.005)
             }
 
+        case .mirror:
+            // A thin pane against the wall, with a frame.
+            add(width, tall, depth * 0.12, y: tall / 2, color: Palette.metal, chamfer: 0.01)
+            add(width * 0.92, tall * 0.92, depth * 0.06,
+                y: tall / 2, z: depth * 0.05,
+                color: UIColor(white: 0.87, alpha: 1), chamfer: 0.004)
+
         case .storage, .cabinetUpper, .medicineCabinet:
             add(width, tall, depth, y: tall / 2, color: Palette.cabinet, chamfer: 0.01)
-            let shelves = max(1, Int((tall / 0.35).rounded()) - 1)
-            for index in 1...shelves {
-                add(width * 0.94, 0.015, depth * 0.9,
-                    y: tall * Double(index) / Double(shelves + 1),
-                    color: UIColor(white: 0.86, alpha: 1), chamfer: 0)
+            if tall < 0.85 {
+                // Nightstand or dresser height: drawer fronts read better than
+                // shelves, and RoomPlan reports both as plain "storage".
+                let drawers = max(1, Int((tall / 0.26).rounded()))
+                for index in 0..<drawers {
+                    add(width * 0.86, tall / Double(drawers) * 0.72, 0.012,
+                        y: tall * (Double(index) + 0.5) / Double(drawers), z: depth / 2,
+                        color: UIColor(white: 0.87, alpha: 1), chamfer: 0.004)
+                    add(width * 0.22, 0.018, 0.022,
+                        y: tall * (Double(index) + 0.5) / Double(drawers), z: depth / 2 + 0.012,
+                        color: Palette.metal, chamfer: 0.008)
+                }
+            } else {
+                let shelves = max(1, Int((tall / 0.35).rounded()) - 1)
+                for index in 1...shelves {
+                    add(width * 0.94, 0.015, depth * 0.9,
+                        y: tall * Double(index) / Double(shelves + 1),
+                        color: UIColor(white: 0.86, alpha: 1), chamfer: 0)
+                }
             }
 
         case .radiator:

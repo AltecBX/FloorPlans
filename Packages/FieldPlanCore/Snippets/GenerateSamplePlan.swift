@@ -27,6 +27,7 @@ level.northAngle = 0.35
 let formatter = UnitFormatter()
 var options = PlanGenerator.Options()
 options.formatter = formatter
+options.showCeilingHeights = true   // exercise the new label line
 
 func write(_ text: String, _ name: String) throws {
     let url = outputDir.appendingPathComponent(name)

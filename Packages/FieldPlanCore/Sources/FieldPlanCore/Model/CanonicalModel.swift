@@ -316,7 +316,7 @@ public enum FixtureCategory: String, Codable, CaseIterable, Sendable {
     case oven, dishwasher, rangeHood
     // General
     case washerDryer, radiator, fireplace, stairs, column, bed, sofa, chair
-    case table, storage, television, medicineCabinet, soffit, custom
+    case table, storage, television, medicineCabinet, mirror, soffit, custom
 
     public var displayName: String {
         switch self {
@@ -346,6 +346,7 @@ public enum FixtureCategory: String, Codable, CaseIterable, Sendable {
         case .storage: return "Storage"
         case .television: return "Television"
         case .medicineCabinet: return "Medicine Cabinet"
+        case .mirror: return "Mirror"
         case .soffit: return "Soffit"
         case .custom: return "Custom"
         }
