@@ -224,3 +224,25 @@ The owner scanned four connected spaces on a LiDAR iPhone. Findings:
   below 0.85 m rather than shelves. RoomPlan reports nightstands as plain
   "storage".
 - Core suite now 123 tests, all passing on Linux.
+
+## 2026-08-30 — Build 9: the dollhouse was lit wrong, not shaped wrong
+
+The owner compared the 3D view against a CubiCasa render and called it lame.
+Fair: the geometry was never the main problem.
+
+- The scene rendered with `autoenablesDefaultLighting` — a single flat
+  headlight, no shadows, no ambient occlusion — over untextured solid colours.
+  Under that setup any model reads as moulded plastic however well it is shaped.
+- `SceneStyling` replaces it: warm key light casting soft deferred shadows,
+  cool fill, ambient, and a gradient lighting environment so the
+  physically-based materials have something to reflect. The camera gains
+  screen-space ambient occlusion (which seats furniture on the floor), HDR and
+  a little bloom. Both the interactive view and the offscreen PDF snapshot use
+  it, and both now switch the headlight off.
+- Floors are textured per room type, drawn procedurally in Core Graphics:
+  staggered oak planks with grain for living space, grouted tile for wet rooms,
+  flat-weave carpet for bedrooms. Nothing to license or download, and it scales
+  to any room size.
+- Remaining honest gap: furniture is still assembled from primitives. Matching
+  a CubiCasa render exactly needs a library of authored meshes per object
+  category — an asset/licensing decision, not a code one.

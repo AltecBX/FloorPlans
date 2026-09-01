@@ -181,7 +181,9 @@ private struct SceneKitContainer: UIViewRepresentable {
     func makeUIView(context: Context) -> SCNView {
         let view = SCNView()
         view.allowsCameraControl = true
-        view.autoenablesDefaultLighting = true
+        // Off deliberately: the scene carries its own key/fill/ambient rig,
+        // and the default headlight would flatten the shadows it casts.
+        view.autoenablesDefaultLighting = false
         view.backgroundColor = UIColor.systemBackground
         view.antialiasingMode = .multisampling4X
         let tap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleTap(_:)))
@@ -330,7 +332,7 @@ enum ThreeDSceneBuilder {
         let (center, radius) = boundingSphere(of: levels)
         let cameraNode = SCNNode()
         cameraNode.camera = SCNCamera()
-        cameraNode.camera?.zFar = 500
+        if let camera = cameraNode.camera { SceneStyling.styleCamera(camera) }
         let distance = max(radius * 2.2, 6)
         cameraNode.position = SCNVector3(
             Float(center.x + distance * 0.7),
@@ -339,11 +341,7 @@ enum ThreeDSceneBuilder {
         cameraNode.look(at: SCNVector3(Float(center.x), 0, Float(-center.y)))
         scene.rootNode.addChildNode(cameraNode)
 
-        let ambient = SCNNode()
-        ambient.light = SCNLight()
-        ambient.light?.type = .ambient
-        ambient.light?.intensity = 350
-        scene.rootNode.addChildNode(ambient)
+        SceneStyling.applyLighting(to: scene, radius: radius)
 
         return scene
     }
@@ -356,14 +354,19 @@ enum ThreeDSceneBuilder {
     }
 
     static func wallMaterial(for status: ChangeStatus, mode: PlanRenderMode) -> SCNMaterial {
-        let material = SCNMaterial()
+        // Existing walls get the physically-based finish so they catch the key
+        // light and the shadows the furniture casts; renovation states stay
+        // flat and obvious.
+        let material = status == .existing
+            ? SceneStyling.wallMaterial()
+            : SCNMaterial()
         switch status {
         case .new where mode == .proposed:
             material.diffuse.contents = UIColor.systemBlue.withAlphaComponent(0.85)
         case .demolish where mode != .proposed:
             material.diffuse.contents = UIColor.systemRed.withAlphaComponent(0.5)
         default:
-            material.diffuse.contents = UIColor(white: 0.92, alpha: 1)
+            break
         }
         material.locksAmbientWithDiffuse = true
         return material
@@ -432,12 +435,7 @@ enum ThreeDSceneBuilder {
         }
         path.close()
         let shape = SCNShape(path: path, extrusionDepth: 0.08)
-        let material = SCNMaterial()
-        // Warm wood tone; wet rooms get a cool tile tone.
-        material.diffuse.contents = room.type == .bathroom || room.type == .powderRoom || room.type == .laundry
-            ? UIColor(red: 0.84, green: 0.87, blue: 0.88, alpha: 1)
-            : UIColor(red: 0.85, green: 0.76, blue: 0.62, alpha: 1)
-        shape.materials = [material]
+        shape.materials = [SceneStyling.floorMaterial(for: room.type)]
         let node = SCNNode(geometry: shape)
         // Shape lies in its local XY plane extruded along Z; lay it flat so
         // plan +y maps to scene −z and the slab top sits at floor level.

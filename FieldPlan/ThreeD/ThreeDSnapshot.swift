@@ -42,7 +42,8 @@ enum ThreeDSnapshot {
         let renderer = SCNRenderer(device: device, options: nil)
         renderer.scene = scene
         renderer.pointOfView = cameraNode
-        renderer.autoenablesDefaultLighting = true
+        // The scene lights itself; the headlight would flatten the shadows.
+        renderer.autoenablesDefaultLighting = false
         return renderer.snapshot(atTime: 0, with: size, antialiasingMode: .multisampling4X)
     }
 }
