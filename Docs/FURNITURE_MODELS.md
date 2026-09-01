@@ -54,7 +54,19 @@ You do not need to size models correctly. Two things it cannot guess:
 Keep models reasonably light — a few thousand triangles each is plenty for a
 dollhouse view, and a scan can contain a dozen chairs.
 
-## Where to get free models
+## What is already installed
+
+The **Kenney Furniture Kit (CC0)** ships with the app — 18 models covering
+sofa, bed, chair, table, toilet, sink, vanity, bathtub, shower, mirror,
+television, refrigerator, stove, washer/dryer, storage, base and upper
+cabinets, and stairs. They are low-poly and stylised, which suits a dollhouse
+render and keeps the whole set under 600 KB. See `FieldPlan/Furniture/
+CREDITS.txt`.
+
+To replace any of them with something you prefer, just overwrite the file —
+the name is all that matters.
+
+## Where to get more free models
 
 All of these are **CC0** (public domain, no attribution required, safe to ship
 in a commercial app). Always confirm the licence on the individual model — a

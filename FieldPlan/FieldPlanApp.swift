@@ -18,7 +18,7 @@ enum AppInfo {
     /// silently failed looks identical to one that worked. Both this and
     /// `CURRENT_PROJECT_VERSION` are bumped on every push.
     static let releaseDate = "August 30, 2026"
-    static let releaseNotes = "Real 3D furniture models can now be dropped in — anything missing keeps the built-in shapes. Relit scene with shadows and textured floors."
+    static let releaseNotes = "Real 3D furniture: 18 CC0 models for sofas, beds, toilets, tubs, appliances and cabinets, turned to face the room."
 
     /// "1.1 (8)" — the string to quote when reporting a problem.
     static var versionAndBuild: String { "\(version) (\(build))" }

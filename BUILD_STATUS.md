@@ -272,3 +272,24 @@ free CC0 assets.
   names CC0 sources (Poly Haven, Kenney, Sketchfab CC0 filter). No models are
   committed: acquiring them is the owner's call, and binaries that cannot be
   inspected here should not be added blind.
+
+## 2026-08-30 — Build 11: real furniture models installed
+
+- **Kenney Furniture Kit (CC0) ships with the app** — 18 models: sofa, bed,
+  chair, table, toilet, sink, vanity, bathtub, shower, mirror, television,
+  refrigerator, stove, washer, storage, base/upper cabinets, stairs. Under
+  600 KB total, no textures (colours come from the .mtl files), attribution in
+  `FieldPlan/Furniture/CREDITS.txt` though CC0 does not require it.
+- Verified before shipping rather than downloaded blind: the kit's own preview
+  renders were assembled into a contact sheet and inspected, and each model's
+  geometry was analysed for units and facing. Tall mass (toilet cistern, sofa
+  back, headboard, shower wall) sits consistently at +Z, so the front is −Z,
+  matching the loader's contract — no yaw corrections were needed.
+- **Furniture is turned to face the room.** RoomPlan's oriented bounding box
+  has no notion of a front, so the scanned rotation is only correct to a half
+  turn. With primitives that barely showed; a real sofa backwards into the room
+  is obvious. `wallFacingYaw` turns anything that belongs against a wall away
+  from the nearest one, and leaves free-standing pieces as scanned. The yaw
+  formula was checked against all four wall directions.
+- Models are scaled to the scanned box, so the kit being at roughly half real
+  scale does not matter.

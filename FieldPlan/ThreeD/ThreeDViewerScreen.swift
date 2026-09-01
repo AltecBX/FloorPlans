@@ -319,7 +319,8 @@ enum ThreeDSceneBuilder {
             }
             for fixture in level.fixtures where includeInMode(fixture.changeStatus, mode: mode) {
                 if fixture.category.isFurniture && !showFurniture { continue }
-                let node = fixtureNode(for: fixture, mode: mode)
+                let node = fixtureNode(for: fixture, mode: mode,
+                                       yaw: wallFacingYaw(for: fixture, in: level))
                 node.position.y += Float(baseY)
                 wallsGroup.addChildNode(node)
             }
@@ -445,7 +446,8 @@ enum ThreeDSceneBuilder {
         return node
     }
 
-    static func fixtureNode(for fixture: FixtureItem, mode: PlanRenderMode) -> SCNNode {
+    static func fixtureNode(for fixture: FixtureItem, mode: PlanRenderMode,
+                            yaw: Double? = nil) -> SCNNode {
         let height = fixture.height ?? defaultHeight(for: fixture.category)
         // Renovation state overrides the furniture palette so demolished and
         // new items stay obvious; otherwise each category gets its own model.
@@ -467,9 +469,53 @@ enum ThreeDSceneBuilder {
             ?? FurnitureModels.node(for: fixture, height: height, override: override)
         // The model is built with its origin on the floor.
         node.position = plans(fixture.center, y: 0)
-        node.eulerAngles.y = Float(fixture.rotation)
+        node.eulerAngles.y = Float(yaw ?? fixture.rotation)
         node.name = "fixture:\(fixture.id.uuidString)"
         return node
+    }
+
+    /// Turns a piece so its back is to the nearest wall.
+    ///
+    /// RoomPlan reports an oriented bounding box with no notion of a front, so
+    /// the scanned rotation is only correct to a half turn — with primitives
+    /// that hardly showed, but a real sofa rendered backwards into the room is
+    /// obvious. Anything that belongs against a wall is turned to face away
+    /// from the nearest one; free-standing pieces (tables, chairs, islands)
+    /// keep the rotation as scanned.
+    ///
+    /// Returns nil when nothing is close enough to take a cue from.
+    static func wallFacingYaw(for fixture: FixtureItem, in level: LevelGeometry) -> Double? {
+        guard backsToWall(fixture.category) else { return nil }
+        let reach = max(fixture.size.x, fixture.size.y) * 0.75 + 0.35
+
+        var nearest: (distance: Double, forward: Vec2)?
+        for wall in level.walls {
+            let closest = GeometryOps.closestPointOnSegment(fixture.center, wall.start, wall.end)
+            let distance = fixture.center.distance(to: closest)
+            guard distance < reach else { continue }
+            guard nearest == nil || distance < nearest!.distance else { continue }
+            let away = fixture.center - closest
+            let forward = away.length > 1e-6 ? away.normalized : wall.direction.perpendicular
+            nearest = (distance, forward)
+        }
+        guard let forward = nearest?.forward else { return nil }
+
+        // Plan (x, y) maps to scene (x, -y), and a model's front is its local
+        // -Z, which a yaw rotation sends to (-sin, 0, -cos).
+        return atan2(-forward.x, forward.y)
+    }
+
+    /// Pieces that stand against a wall in a real room.
+    static func backsToWall(_ category: FixtureCategory) -> Bool {
+        switch category {
+        case .sofa, .bed, .refrigerator, .stove, .oven, .dishwasher, .washerDryer,
+             .toilet, .sink, .vanity, .cabinetBase, .cabinetUpper, .storage,
+             .television, .mirror, .bathtub, .shower, .fireplace, .medicineCabinet,
+             .radiator:
+            return true
+        default:
+            return false
+        }
     }
 
     static func defaultHeight(for category: FixtureCategory) -> Double {
