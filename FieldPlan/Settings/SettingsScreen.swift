@@ -114,6 +114,23 @@ struct SettingsScreen: View {
                     Text("Creates a clearly-labeled sample one-bedroom apartment so you can explore plans, takeoff and reports without scanning. Sample geometry is never mixed with field measurements.")
                 }
 
+                Section {
+                    let installed = FurnitureLibrary.installedCategories
+                    LabeledContent("3D furniture models",
+                                   value: installed.isEmpty
+                                       ? "None — using built-in shapes"
+                                       : "\(installed.count) installed")
+                    if !installed.isEmpty {
+                        Text(installed.map(\.displayName).sorted().joined(separator: ", "))
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                } header: {
+                    Text("3D Model Library")
+                } footer: {
+                    Text("Anything without a model is drawn with the built-in shapes. Drop model files into the app's Furniture folder to replace them — see Docs/FURNITURE_MODELS.md.")
+                }
+
                 Section("Privacy") {
                     Text("\(AppInfo.appName) stores every project, scan and photo on this device only. No analytics, no ads, no cloud uploads. The one network call is Apple's geocoding service, used only when you tap Use Current Address on a project. Sharing happens only when you export a file yourself.")
                         .font(.footnote)

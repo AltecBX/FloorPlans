@@ -246,3 +246,29 @@ Fair: the geometry was never the main problem.
 - Remaining honest gap: furniture is still assembled from primitives. Matching
   a CubiCasa render exactly needs a library of authored meshes per object
   category — an asset/licensing decision, not a code one.
+
+## 2026-08-30 — Build 10: furniture model library (drop-in)
+
+The owner chose to replace primitive furniture with real models, starting from
+free CC0 assets.
+
+- `FurnitureLibrary` loads a model per fixture category from
+  `FieldPlan/Furniture/`, accepting `.usdz/.scn/.usdc/.dae/.obj` — SceneKit
+  reads OBJ and DAE through ModelIO, so downloaded models need no conversion.
+- The scanned bounding box stays the measurement; the model is fitted to it.
+  Loading normalises whatever it is given: flatten, centre the footprint, stand
+  it on the floor, then scale to the scanned size. Anisotropy is clamped to
+  1.6× so a bad detection cannot produce a grotesque model, and categories with
+  a standardised shape (toilet, basin, vanity, mirror, TV) are fitted uniformly
+  instead of stretched.
+- Templates are cached and cloned per instance — a scan can hold a dozen
+  chairs.
+- **Every category without a model falls back to the primitive build**, so the
+  library fills in one piece at a time and the app never regresses.
+- `FurnitureLibrary.adjustments` carries a per-category yaw, so a model that
+  faces the wrong way is a one-number fix rather than a re-export.
+- Settings → 3D Model Library lists which categories are live.
+- `Docs/FURNITURE_MODELS.md` documents the naming and orientation contract and
+  names CC0 sources (Poly Haven, Kenney, Sketchfab CC0 filter). No models are
+  committed: acquiring them is the owner's call, and binaries that cannot be
+  inspected here should not be added blind.

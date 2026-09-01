@@ -458,7 +458,13 @@ enum ThreeDSceneBuilder {
         default:
             override = nil
         }
-        let node = FurnitureModels.node(for: fixture, height: height, override: override)
+        // A real model when one is installed for this category, otherwise the
+        // primitive build. Both put their origin at the footprint centre on the
+        // floor, so placement below is identical either way.
+        let node = (override == nil
+                    ? FurnitureLibrary.node(for: fixture.category, size: fixture.size, height: height)
+                    : nil)
+            ?? FurnitureModels.node(for: fixture, height: height, override: override)
         // The model is built with its origin on the floor.
         node.position = plans(fixture.center, y: 0)
         node.eulerAngles.y = Float(fixture.rotation)
