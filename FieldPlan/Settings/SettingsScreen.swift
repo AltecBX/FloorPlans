@@ -44,12 +44,22 @@ struct SettingsScreen: View {
                     }
                 }
 
-                Section("Scanning") {
+                Section {
                     Toggle("Keep screen awake while scanning", isOn: Binding(
                         get: { settings.keepScreenAwakeDuringScan },
                         set: { settings.keepScreenAwakeDuringScan = $0 }))
+                    Toggle("Record sensor data during scans", isOn: Binding(
+                        get: { settings.recordSensorData },
+                        set: { settings.recordSensorData = $0 }))
+                    Toggle("Show confidence on the plan", isOn: Binding(
+                        get: { settings.showConfidenceOnPlan },
+                        set: { settings.showConfidenceOnPlan = $0 }))
                     LabeledContent("LiDAR scanning",
                                    value: ScanCapability.isRoomPlanSupported ? "Supported" : "Not available on this device")
+                } header: {
+                    Text("Scanning")
+                } footer: {
+                    Text("Sensor data is the LiDAR mesh, camera poses, keyframes and any photos you take while scanning. It stays on this device, gives every wall an evidence score, powers the live coverage map and lets a scan be re-processed later without revisiting the property. Roughly 20–60 MB per property.")
                 }
 
                 Section("Company Branding (Reports)") {

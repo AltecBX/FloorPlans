@@ -43,6 +43,16 @@ enum CapturedRoomBridge {
         return Vec3(Double(world.x), Double(world.y), Double(world.z))
     }
 
+    /// Column-major 16 floats, the layout the core's evidence types use.
+    static func floats(_ m: simd_float4x4) -> [Float] {
+        [
+            m.columns.0.x, m.columns.0.y, m.columns.0.z, m.columns.0.w,
+            m.columns.1.x, m.columns.1.y, m.columns.1.z, m.columns.1.w,
+            m.columns.2.x, m.columns.2.y, m.columns.2.z, m.columns.2.w,
+            m.columns.3.x, m.columns.3.y, m.columns.3.z, m.columns.3.w,
+        ]
+    }
+
     static func confidenceLevel(_ confidence: CapturedRoom.Confidence) -> Int {
         switch confidence {
         case .high: return 2
@@ -52,8 +62,23 @@ enum CapturedRoomBridge {
         }
     }
 
+    static func curveDTO(_ curve: CapturedRoom.Surface.Curve?) -> ScannedCurveDTO? {
+        guard let curve else { return nil }
+        return ScannedCurveDTO(
+            center: Vec2(Double(curve.center.x), Double(curve.center.y)),
+            radius: Double(curve.radius),
+            startAngle: curve.startAngle.converted(to: .radians).value,
+            endAngle: curve.endAngle.converted(to: .radians).value)
+    }
+
     static func surfaceDTO(_ surface: CapturedRoom.Surface, kind: ScannedSurfaceKind) -> ScannedSurfaceDTO {
-        ScannedSurfaceDTO(
+        // RoomPlan reports whether a door stood open; nothing else about a
+        // door's operation is in the capture.
+        var isDoorOpen: Bool? = nil
+        if case .door(let isOpen) = surface.category {
+            isDoorOpen = isOpen
+        }
+        return ScannedSurfaceDTO(
             id: surface.identifier,
             kind: kind,
             center: center(of: surface.transform),
@@ -63,7 +88,11 @@ enum CapturedRoomBridge {
             thickness: nil,
             polygonCorners: surface.polygonCorners.map { worldPoint($0, transform: surface.transform) },
             confidenceLevel: confidenceLevel(surface.confidence),
-            parentID: surface.parentIdentifier
+            parentID: surface.parentIdentifier,
+            isDoorOpen: isDoorOpen,
+            transform: floats(surface.transform),
+            curve: curveDTO(surface.curve),
+            story: surface.story
         )
     }
 
@@ -93,14 +122,22 @@ enum CapturedRoomBridge {
                     Double(object.dimensions.x),
                     Double(object.dimensions.y),
                     Double(object.dimensions.z)),
-                confidenceLevel: confidenceLevel(object.confidence))
+                confidenceLevel: confidenceLevel(object.confidence),
+                attributes: object.attributes.map { String(describing: $0) },
+                story: object.story,
+                parentID: object.parentIdentifier)
         }
 
-        // RoomPlan's own room classification (iOS 17 sections). The case name
-        // ("livingRoom", "bathroom", …) feeds FieldPlanCore's type mapping;
-        // when it's absent or unidentified, the core infers the type from the
-        // fixtures found in the room.
-        let sectionLabel: String? = room.sections.first.map { String(describing: $0.label) }
+        // RoomPlan's room classification (iOS 17 sections): every section
+        // with its centre, so a continuous capture can type each of the rooms
+        // it contains; the first one doubles as the overall suggestion.
+        let sections = room.sections.map { section in
+            ScannedSectionDTO(
+                label: String(describing: section.label),
+                center: vec3(section.center),
+                story: section.story)
+        }
+        let sectionLabel: String? = sections.first?.label
 
         return ScannedRoomDTO(
             id: room.identifier,
@@ -108,7 +145,8 @@ enum CapturedRoomBridge {
             suggestedType: sectionLabel,
             surfaces: surfaces,
             objects: objects,
-            capturedAt: Date()
+            capturedAt: Date(),
+            sections: sections
         )
     }
 
@@ -124,5 +162,19 @@ enum CapturedRoomBridge {
 
     static func loadRawRoom(from data: Data) throws -> CapturedRoom {
         try JSONDecoder().decode(CapturedRoom.self, from: data)
+    }
+
+    /// Maps RoomPlan's coaching instruction onto the advice vocabulary so it
+    /// shares one prioritised list with the quality engine.
+    static func adviceKind(for instruction: RoomCaptureSession.Instruction) -> ScanAdviceKind? {
+        switch instruction {
+        case .moveCloseToWall: return .moveCloser
+        case .moveAwayFromWall: return .moveAway
+        case .slowDown: return .slowDown
+        case .turnOnLight: return .lowLight
+        case .lowTexture: return .lowTexture
+        case .normal: return nil
+        @unknown default: return nil
+        }
     }
 }

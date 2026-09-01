@@ -11,6 +11,23 @@ public enum ScannedSurfaceKind: String, Codable, Sendable {
     case wall, door, window, opening, floor
 }
 
+/// A curved surface's arc, in the surface's local frame (RoomPlan's
+/// `CapturedRoom.Surface.Curve`): centre on the local XZ plane, angles in
+/// radians.
+public struct ScannedCurveDTO: Codable, Hashable, Sendable {
+    public var center: Vec2
+    public var radius: Double
+    public var startAngle: Double
+    public var endAngle: Double
+
+    public init(center: Vec2, radius: Double, startAngle: Double, endAngle: Double) {
+        self.center = center
+        self.radius = radius
+        self.startAngle = startAngle
+        self.endAngle = endAngle
+    }
+}
+
 /// A planar surface from a scan, in world space (meters, +Y up).
 public struct ScannedSurfaceDTO: Codable, Hashable, Identifiable, Sendable {
     public var id: UUID
@@ -31,6 +48,12 @@ public struct ScannedSurfaceDTO: Codable, Hashable, Identifiable, Sendable {
     public var parentID: UUID?
     /// Doors only: whether the scanner saw the door open.
     public var isDoorOpen: Bool?
+    /// Full local-to-world transform, 16 floats column-major, when bridged.
+    public var transform: [Float]?
+    /// The arc of a curved wall, when the scanner reported one.
+    public var curve: ScannedCurveDTO?
+    /// Story index the scanner assigned (0 = the first floor scanned).
+    public var story: Int?
 
     public init(
         id: UUID = UUID(),
@@ -43,7 +66,10 @@ public struct ScannedSurfaceDTO: Codable, Hashable, Identifiable, Sendable {
         polygonCorners: [Vec3] = [],
         confidenceLevel: Int = 1,
         parentID: UUID? = nil,
-        isDoorOpen: Bool? = nil
+        isDoorOpen: Bool? = nil,
+        transform: [Float]? = nil,
+        curve: ScannedCurveDTO? = nil,
+        story: Int? = nil
     ) {
         self.id = id
         self.kind = kind
@@ -56,6 +82,9 @@ public struct ScannedSurfaceDTO: Codable, Hashable, Identifiable, Sendable {
         self.confidenceLevel = confidenceLevel
         self.parentID = parentID
         self.isDoorOpen = isDoorOpen
+        self.transform = transform
+        self.curve = curve
+        self.story = story
     }
 
     public var captureConfidence: CaptureConfidence {
@@ -77,6 +106,11 @@ public struct ScannedObjectDTO: Codable, Hashable, Identifiable, Sendable {
     /// Full extents: width (x), height (y), depth (z).
     public var dimensions: Vec3
     public var confidenceLevel: Int
+    /// RoomPlan attribute names ("lShaped", "stool", …) when reported.
+    public var attributes: [String]
+    public var story: Int?
+    /// Parent object/surface (a dishwasher's cabinet run, a chair's table).
+    public var parentID: UUID?
 
     public init(
         id: UUID = UUID(),
@@ -84,7 +118,10 @@ public struct ScannedObjectDTO: Codable, Hashable, Identifiable, Sendable {
         center: Vec3,
         xAxis: Vec3,
         dimensions: Vec3,
-        confidenceLevel: Int = 1
+        confidenceLevel: Int = 1,
+        attributes: [String] = [],
+        story: Int? = nil,
+        parentID: UUID? = nil
     ) {
         self.id = id
         self.categoryName = categoryName
@@ -92,6 +129,23 @@ public struct ScannedObjectDTO: Codable, Hashable, Identifiable, Sendable {
         self.xAxis = xAxis
         self.dimensions = dimensions
         self.confidenceLevel = confidenceLevel
+        self.attributes = attributes
+        self.story = story
+        self.parentID = parentID
+    }
+}
+
+/// RoomPlan's own idea of a room inside a capture (`CapturedRoom.Section`):
+/// a label with the point it applies to. A continuous walk yields several.
+public struct ScannedSectionDTO: Codable, Hashable, Sendable {
+    public var label: String
+    public var center: Vec3
+    public var story: Int
+
+    public init(label: String, center: Vec3, story: Int = 0) {
+        self.label = label
+        self.center = center
+        self.story = story
     }
 }
 
@@ -103,6 +157,7 @@ public struct ScannedRoomDTO: Codable, Hashable, Identifiable, Sendable {
     public var surfaces: [ScannedSurfaceDTO]
     public var objects: [ScannedObjectDTO]
     public var capturedAt: Date
+    public var sections: [ScannedSectionDTO]
 
     public init(
         id: UUID = UUID(),
@@ -110,7 +165,8 @@ public struct ScannedRoomDTO: Codable, Hashable, Identifiable, Sendable {
         suggestedType: String? = nil,
         surfaces: [ScannedSurfaceDTO] = [],
         objects: [ScannedObjectDTO] = [],
-        capturedAt: Date = Date()
+        capturedAt: Date = Date(),
+        sections: [ScannedSectionDTO] = []
     ) {
         self.id = id
         self.suggestedName = suggestedName
@@ -118,6 +174,20 @@ public struct ScannedRoomDTO: Codable, Hashable, Identifiable, Sendable {
         self.surfaces = surfaces
         self.objects = objects
         self.capturedAt = capturedAt
+        self.sections = sections
+    }
+}
+
+/// A room-type hint at a plan point, from a scanner section.
+public struct RoomSectionHint: Codable, Hashable, Sendable {
+    public var type: RoomType
+    public var center: Vec2
+    public var story: Int
+
+    public init(type: RoomType, center: Vec2, story: Int = 0) {
+        self.type = type
+        self.center = center
+        self.story = story
     }
 }
 
@@ -209,7 +279,11 @@ public enum ScanConversion {
     /// Conservative by design: if the walls do not close into more faces than
     /// there are rooms already (a single room, or a scan with gaps), the level
     /// is returned untouched rather than losing rooms to a failed detection.
-    public static func splitIntoRooms(_ level: LevelGeometry, minimumArea: Double = 0.8) -> LevelGeometry {
+    public static func splitIntoRooms(
+        _ level: LevelGeometry,
+        hints: [RoomSectionHint] = [],
+        minimumArea: Double = 0.8
+    ) -> LevelGeometry {
         // Partitions meet exterior walls mid-span, so the walls have to be cut
         // at those junctions before the graph can see the enclosed spaces.
         let planar = GeometryCleaner.splitAtJunctions(level.walls)
@@ -221,9 +295,13 @@ public enum ScanConversion {
         for face in faces {
             let contained = level.fixtures.filter { GeometryOps.polygonContains(face, $0.center) }
             let area = GeometryOps.area(face)
-            let type = inferRoomType(
+            let fixtureType = inferRoomType(
                 objectNames: contained.map { $0.category.rawValue },
-                floorArea: area) ?? .other
+                floorArea: area)
+            // The scanner's own section label for this face, when it put one
+            // inside it.
+            let hintType = hints.first { GeometryOps.polygonContains(face, $0.center) }?.type
+            let type = resolvedRoomType(fixture: fixtureType, hint: hintType)
 
             // Walls bounding this face, and the ceiling height they agree on.
             let bounding = level.walls.filter {
@@ -255,6 +333,21 @@ public enum ScanConversion {
         return result
     }
 
+    /// Combines fixture inference with the scanner's section label. A wet room
+    /// or kitchen is decided by its fixtures — a toilet is not a guess — while
+    /// living, dining and bedroom labels from the scanner beat weak fixture
+    /// evidence (a single chair proves nothing).
+    static func resolvedRoomType(fixture: RoomType?, hint: RoomType?) -> RoomType {
+        switch fixture {
+        case .bathroom?, .powderRoom?, .kitchen?, .laundry?:
+            return fixture!
+        default:
+            break
+        }
+        if let hint, hint != .other { return hint }
+        return fixture ?? .other
+    }
+
     /// Next available auto name for a room type: "Bedroom", "Bedroom 2", ….
     public static func autoName(for type: RoomType, avoiding existing: Set<String>) -> String {
         let base = type == .other ? "Room" : type.displayName
@@ -271,6 +364,18 @@ public enum ScanConversion {
         public var fixtures: [FixtureItem] = []
         /// Non-fatal notes about what could not be converted cleanly.
         public var warnings: [String] = []
+        /// Scanner section labels, used to type the rooms recovered by
+        /// `splitIntoRooms`.
+        public var sectionHints: [RoomSectionHint] = []
+
+        public init(rooms: [RoomShape] = [], walls: [Wall] = [], fixtures: [FixtureItem] = [],
+                    warnings: [String] = [], sectionHints: [RoomSectionHint] = []) {
+            self.rooms = rooms
+            self.walls = walls
+            self.fixtures = fixtures
+            self.warnings = warnings
+            self.sectionHints = sectionHints
+        }
     }
 
     /// Converts scanned rooms (single scan or a merged multiroom structure)
@@ -295,8 +400,11 @@ public enum ScanConversion {
                 return bottoms.min() ?? 0
             }()
 
-            // Convert walls.
+            // Convert walls. A curved wall becomes a chain of segments that
+            // follow its arc; its openings attach to the nearest segment.
             var roomWalls: [Wall] = []
+            var segmentsBySurface: [UUID: [UUID]] = [:]
+            let floorOutline = floorSurfaces.first.map { $0.polygonCorners.map(\.planProjection) } ?? []
             for surface in wallSurfaces {
                 guard surface.width > 0.02 else { continue }
                 let axisPlan = planDirection(surface.xAxis)
@@ -304,6 +412,34 @@ public enum ScanConversion {
                     result.warnings.append("Skipped a wall with a vertical width axis.")
                     continue
                 }
+                let thickness = surface.thickness ?? 0.1143
+                let thicknessSource: ThicknessSource = surface.thickness == nil ? .assumed : .measured
+
+                if surface.curve != nil {
+                    if let arc = curvedWallSegments(surface, floorOutline: floorOutline) {
+                        var ids: [UUID] = []
+                        for (index, segment) in arc.enumerated() {
+                            let wall = Wall(
+                                id: index == 0 ? surface.id : UUID(),
+                                start: segment.start,
+                                end: segment.end,
+                                height: max(surface.height, 0.1),
+                                thickness: thickness,
+                                openings: [],
+                                changeStatus: .existing,
+                                source: .lidarScanned,
+                                confidence: surface.captureConfidence,
+                                sourceScanID: scanned.id,
+                                thicknessSource: thicknessSource)
+                            roomWalls.append(wall)
+                            ids.append(wall.id)
+                        }
+                        segmentsBySurface[surface.id] = ids
+                        continue
+                    }
+                    result.warnings.append("A curved wall could not be traced from the scanner's arc and was drawn straight.")
+                }
+
                 let centerPlan = surface.center.planProjection
                 let half = axisPlan * (surface.width / 2)
                 let wall = Wall(
@@ -311,12 +447,13 @@ public enum ScanConversion {
                     start: centerPlan - half,
                     end: centerPlan + half,
                     height: max(surface.height, 0.1),
-                    thickness: surface.thickness ?? 0.1143,
+                    thickness: thickness,
                     openings: [],
                     changeStatus: .existing,
                     source: .lidarScanned,
                     confidence: surface.captureConfidence,
-                    sourceScanID: scanned.id
+                    sourceScanID: scanned.id,
+                    thicknessSource: thicknessSource
                 )
                 roomWalls.append(wall)
             }
@@ -331,12 +468,24 @@ public enum ScanConversion {
                     }
                 }()
 
-                // Host wall: explicit parent first, else nearest wall line.
+                // Host wall: explicit parent first (nearest segment when the
+                // parent was a curve), else nearest wall line.
                 var hostIndex: Int? = nil
-                if let parentID = surface.parentID {
-                    hostIndex = roomWalls.firstIndex { $0.id == parentID }
-                }
                 let openingPlanCenter = surface.center.planProjection
+                if let parentID = surface.parentID {
+                    if let segmentIDs = segmentsBySurface[parentID] {
+                        var bestDist = Double.greatestFiniteMagnitude
+                        for (i, wall) in roomWalls.enumerated() where segmentIDs.contains(wall.id) {
+                            let d = GeometryOps.distanceToSegment(openingPlanCenter, wall.start, wall.end)
+                            if d < bestDist {
+                                bestDist = d
+                                hostIndex = i
+                            }
+                        }
+                    } else {
+                        hostIndex = roomWalls.firstIndex { $0.id == parentID }
+                    }
+                }
                 if hostIndex == nil {
                     var bestDist = 0.5
                     for (i, wall) in roomWalls.enumerated() {
@@ -370,7 +519,8 @@ public enum ScanConversion {
                     swing: nil,
                     changeStatus: .existing,
                     source: .lidarScanned,
-                    confidence: surface.captureConfidence
+                    confidence: surface.captureConfidence,
+                    isOpenAtCapture: kind == .door ? surface.isDoorOpen : nil
                 )
                 roomWalls[host].openings.append(opening)
                 roomWalls[host].openings.sort { $0.centerOffset < $1.centerOffset }
@@ -394,9 +544,23 @@ public enum ScanConversion {
             let heights = roomWalls.map(\.height).sorted()
             let ceiling = heights.isEmpty ? nil : heights[heights.count / 2]
 
-            // Room classification: scanner's own label first, then inference
-            // from the fixtures found inside the room.
+            // Room classification: the scanner's section nearest the room's
+            // centre first, then its overall label, then inference from the
+            // fixtures found inside the room.
             var type = roomType(forSuggestion: scanned.suggestedType)
+            if polygon.count >= 3, !scanned.sections.isEmpty {
+                let centroid = GeometryOps.centroid(polygon)
+                if let nearest = scanned.sections.min(by: {
+                    $0.center.planProjection.distance(to: centroid) < $1.center.planProjection.distance(to: centroid)
+                }) {
+                    let sectionType = roomType(forSuggestion: nearest.label)
+                    if sectionType != .other { type = sectionType }
+                }
+            }
+            result.sectionHints.append(contentsOf: scanned.sections.map {
+                RoomSectionHint(type: roomType(forSuggestion: $0.label),
+                                center: $0.center.planProjection, story: $0.story)
+            })
             if type == .other {
                 let floorArea = polygon.count >= 3 ? GeometryOps.area(polygon) : nil
                 type = inferRoomType(
@@ -467,8 +631,9 @@ public enum ScanConversion {
         result.fixtures.append(contentsOf: conversion.fixtures)
 
         // A single capture usually covers several rooms; recover them from the
-        // wall graph so each is typed and named on its own fixtures.
-        result = splitIntoRooms(result)
+        // wall graph so each is typed and named on its own fixtures and the
+        // scanner's section labels.
+        result = splitIntoRooms(result, hints: conversion.sectionHints)
 
         // Auto-name rooms captured without a user-entered name, numbering
         // duplicates per level: Bedroom, Bedroom 2, Bathroom, …
@@ -484,6 +649,79 @@ public enum ScanConversion {
     /// Projects a world direction onto the plan plane (drops Y, flips Z).
     static func planDirection(_ v: Vec3) -> Vec2 {
         Vec2(v.x, -v.z).normalized
+    }
+
+    public struct ArcSegment: Hashable, Sendable {
+        public var start: Vec2
+        public var end: Vec2
+    }
+
+    /// Traces a curved wall's arc into plan segments about `segmentLength`
+    /// long, or nil when the arc cannot be reconciled with the surface.
+    ///
+    /// RoomPlan gives the arc's centre on the surface's local XZ plane with
+    /// start and end angles; the surface transform maps that to the world.
+    /// Two checks guard against a misread convention: the arc's ends must
+    /// land near the ends of the surface's own chord, and when the scanner's
+    /// floor outline is available it decides which way the wall bulges (the
+    /// mirrored arc has the same ends, so the ends alone cannot tell).
+    static func curvedWallSegments(
+        _ surface: ScannedSurfaceDTO,
+        floorOutline: [Vec2],
+        segmentLength: Double = 0.4
+    ) -> [ArcSegment]? {
+        guard let curve = surface.curve, let t = surface.transform, t.count == 16,
+              curve.radius > 0.05 else { return nil }
+        let sweep = curve.endAngle - curve.startAngle
+        guard abs(sweep) > 0.02 else { return nil }
+
+        func world(_ local: Vec3) -> Vec3 {
+            Vec3(
+                Double(t[0]) * local.x + Double(t[4]) * local.y + Double(t[8]) * local.z + Double(t[12]),
+                Double(t[1]) * local.x + Double(t[5]) * local.y + Double(t[9]) * local.z + Double(t[13]),
+                Double(t[2]) * local.x + Double(t[6]) * local.y + Double(t[10]) * local.z + Double(t[14]))
+        }
+        let arcLength = abs(sweep) * curve.radius
+        let count = max(2, min(32, Int((arcLength / segmentLength).rounded(.up))))
+        var points: [Vec2] = []
+        for i in 0...count {
+            let angle = curve.startAngle + sweep * Double(i) / Double(count)
+            let local = Vec3(curve.center.x + curve.radius * cos(angle), 0,
+                             curve.center.y + curve.radius * sin(angle))
+            points.append(world(local).planProjection)
+        }
+
+        // The arc's ends must be the chord's ends.
+        let axisPlan = planDirection(surface.xAxis)
+        let centerPlan = surface.center.planProjection
+        let half = axisPlan * (surface.width / 2)
+        let chordA = centerPlan - half
+        let chordB = centerPlan + half
+        let tolerance = max(0.5, surface.width * 0.3)
+        guard let first = points.first, let last = points.last else { return nil }
+        let forward = first.distance(to: chordA) <= tolerance && last.distance(to: chordB) <= tolerance
+        let backward = first.distance(to: chordB) <= tolerance && last.distance(to: chordA) <= tolerance
+        guard forward || backward else { return nil }
+
+        // Bulge direction from the floor outline when there is one.
+        if floorOutline.count >= 6 {
+            let mid = points[points.count / 2]
+            let chordDir = (chordB - chordA).normalized
+            let mirrored = mirror(mid, acrossLineThrough: chordA, direction: chordDir)
+            let asIs = GeometryOps.distanceToPolygonBoundary(floorOutline, mid)
+            let flipped = GeometryOps.distanceToPolygonBoundary(floorOutline, mirrored)
+            if flipped + 0.05 < asIs {
+                points = points.map { mirror($0, acrossLineThrough: chordA, direction: chordDir) }
+            }
+        }
+        return zip(points, points.dropFirst()).map { ArcSegment(start: $0, end: $1) }
+    }
+
+    static func mirror(_ p: Vec2, acrossLineThrough a: Vec2, direction: Vec2) -> Vec2 {
+        let d = p - a
+        let along = d.dot(direction)
+        let perpendicular = d - direction * along
+        return p - perpendicular * 2
     }
 
     /// Removes duplicate walls that occupy the same span (partitions captured

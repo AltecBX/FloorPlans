@@ -125,6 +125,11 @@ public struct WallOpening: Codable, Hashable, Identifiable, Sendable {
     public var source: MeasurementSource
     public var confidence: CaptureConfidence
     public var label: String?
+    /// Hinged unless set otherwise; a scan cannot tell a slider from a swing.
+    public var style: DoorStyle?
+    /// Whether the scanner saw the door open (doors only).
+    public var isOpenAtCapture: Bool?
+    public var evidence: ElementEvidence?
 
     public init(
         id: UUID = UUID(),
@@ -137,7 +142,10 @@ public struct WallOpening: Codable, Hashable, Identifiable, Sendable {
         changeStatus: ChangeStatus = .existing,
         source: MeasurementSource = .manualEntry,
         confidence: CaptureConfidence = .medium,
-        label: String? = nil
+        label: String? = nil,
+        style: DoorStyle? = nil,
+        isOpenAtCapture: Bool? = nil,
+        evidence: ElementEvidence? = nil
     ) {
         self.id = id
         self.kind = kind
@@ -150,7 +158,13 @@ public struct WallOpening: Codable, Hashable, Identifiable, Sendable {
         self.source = source
         self.confidence = confidence
         self.label = label
+        self.style = style
+        self.isOpenAtCapture = isOpenAtCapture
+        self.evidence = evidence
     }
+
+    /// The door style actually drawn.
+    public var resolvedStyle: DoorStyle { style ?? .hinged }
 
     public var startOffset: Double { centerOffset - width / 2 }
     public var endOffset: Double { centerOffset + width / 2 }
@@ -171,6 +185,10 @@ public struct Wall: Codable, Hashable, Identifiable, Sendable {
     /// Length as originally captured, preserved when the wall is edited.
     public var originalLength: Double?
     public var sourceScanID: UUID?
+    /// Whether `thickness` was measured, assumed or typed. Nil on legacy data.
+    public var thicknessSource: ThicknessSource?
+    /// What supports this wall: scanner confidence, mesh coverage, tracking.
+    public var evidence: ElementEvidence?
 
     public init(
         id: UUID = UUID(),
@@ -183,7 +201,9 @@ public struct Wall: Codable, Hashable, Identifiable, Sendable {
         source: MeasurementSource = .manualEntry,
         confidence: CaptureConfidence = .medium,
         originalLength: Double? = nil,
-        sourceScanID: UUID? = nil
+        sourceScanID: UUID? = nil,
+        thicknessSource: ThicknessSource? = nil,
+        evidence: ElementEvidence? = nil
     ) {
         self.id = id
         self.start = start
@@ -196,6 +216,8 @@ public struct Wall: Codable, Hashable, Identifiable, Sendable {
         self.confidence = confidence
         self.originalLength = originalLength
         self.sourceScanID = sourceScanID
+        self.thicknessSource = thicknessSource
+        self.evidence = evidence
     }
 
     public var length: Double { start.distance(to: end) }
@@ -277,6 +299,7 @@ public struct RoomShape: Codable, Hashable, Identifiable, Sendable {
     public var wallIDs: [UUID]
     public var sourceScanID: UUID?
     public var changeStatus: ChangeStatus
+    public var evidence: ElementEvidence?
 
     public init(
         id: UUID = UUID(),
@@ -287,7 +310,8 @@ public struct RoomShape: Codable, Hashable, Identifiable, Sendable {
         ceilingHeightSource: MeasurementSource = .calculated,
         wallIDs: [UUID] = [],
         sourceScanID: UUID? = nil,
-        changeStatus: ChangeStatus = .existing
+        changeStatus: ChangeStatus = .existing,
+        evidence: ElementEvidence? = nil
     ) {
         self.id = id
         self.name = name
@@ -298,6 +322,7 @@ public struct RoomShape: Codable, Hashable, Identifiable, Sendable {
         self.wallIDs = wallIDs
         self.sourceScanID = sourceScanID
         self.changeStatus = changeStatus
+        self.evidence = evidence
     }
 
     public var floorArea: Double { GeometryOps.area(polygon) }
@@ -377,6 +402,7 @@ public struct FixtureItem: Codable, Hashable, Identifiable, Sendable {
     public var changeStatus: ChangeStatus
     public var source: MeasurementSource
     public var confidence: CaptureConfidence
+    public var evidence: ElementEvidence?
 
     public init(
         id: UUID = UUID(),
@@ -389,7 +415,8 @@ public struct FixtureItem: Codable, Hashable, Identifiable, Sendable {
         roomID: UUID? = nil,
         changeStatus: ChangeStatus = .existing,
         source: MeasurementSource = .manualEntry,
-        confidence: CaptureConfidence = .medium
+        confidence: CaptureConfidence = .medium,
+        evidence: ElementEvidence? = nil
     ) {
         self.id = id
         self.category = category
@@ -402,6 +429,7 @@ public struct FixtureItem: Codable, Hashable, Identifiable, Sendable {
         self.changeStatus = changeStatus
         self.source = source
         self.confidence = confidence
+        self.evidence = evidence
     }
 
     public var displayName: String { label ?? category.displayName }
@@ -466,6 +494,10 @@ public struct LevelGeometry: Codable, Hashable, Identifiable, Sendable {
     public var annotations: [PlanAnnotation]
     /// Angle of true north relative to +Y, radians, when established.
     public var northAngle: Double?
+    /// World Y of this level's floor in the scan frame, when scanned.
+    public var elevation: Double?
+    /// Sensor sessions that contributed to this level.
+    public var scanSessionIDs: [UUID]?
 
     public init(
         id: UUID = UUID(),
@@ -475,7 +507,9 @@ public struct LevelGeometry: Codable, Hashable, Identifiable, Sendable {
         rooms: [RoomShape] = [],
         fixtures: [FixtureItem] = [],
         annotations: [PlanAnnotation] = [],
-        northAngle: Double? = nil
+        northAngle: Double? = nil,
+        elevation: Double? = nil,
+        scanSessionIDs: [UUID]? = nil
     ) {
         self.id = id
         self.name = name
@@ -485,6 +519,8 @@ public struct LevelGeometry: Codable, Hashable, Identifiable, Sendable {
         self.fixtures = fixtures
         self.annotations = annotations
         self.northAngle = northAngle
+        self.elevation = elevation
+        self.scanSessionIDs = scanSessionIDs
     }
 
     public func wall(withID id: UUID) -> Wall? {
@@ -551,6 +587,8 @@ public struct PlanSnapshot: Codable, Hashable, Identifiable, Sendable {
     public var isLocked: Bool
     public var createdAt: Date
     public var levels: [LevelGeometry]
+    /// Geometry semantics version; nil means 1 (walls on surface lines).
+    public var schemaVersion: Int?
 
     public init(
         id: UUID = UUID(),
@@ -558,7 +596,8 @@ public struct PlanSnapshot: Codable, Hashable, Identifiable, Sendable {
         kind: PlanKind,
         isLocked: Bool = false,
         createdAt: Date = Date(),
-        levels: [LevelGeometry]
+        levels: [LevelGeometry],
+        schemaVersion: Int? = nil
     ) {
         self.id = id
         self.name = name
@@ -566,6 +605,7 @@ public struct PlanSnapshot: Codable, Hashable, Identifiable, Sendable {
         self.isLocked = isLocked
         self.createdAt = createdAt
         self.levels = levels
+        self.schemaVersion = schemaVersion
     }
 
     /// Duplicates this snapshot into an editable proposed plan with fresh

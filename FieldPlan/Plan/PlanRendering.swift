@@ -90,6 +90,9 @@ struct PlanPenStyle {
         case .annotation: return .init(color: .systemOrange, width: 1, dash: nil)
         case .boundary: return .init(color: mid, width: 1.2, dash: [8, 5])
         case .symbol: return .init(color: ink, width: 1, dash: nil)
+        case .wallUncertain: return .init(color: .systemOrange, width: 2.2, dash: [6, 4])
+        case .finding: return .init(color: .systemOrange, width: 1.0, dash: [4, 3])
+        case .photoMarker: return .init(color: .systemBlue, width: 1.1, dash: nil)
         }
     }
 

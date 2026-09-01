@@ -24,6 +24,12 @@ Highlights inspired by professional scanning workflows:
 - **Title block on shared plans** — PNG/SVG/DXF exports carry a sheet block
   with the property, total area, date and your company details, so a plan
   that leaves the phone identifies itself.
+- **Scan engine** — live advice (tracking, speed, light, LiDAR confidence),
+  a coverage minimap built from the LiDAR mesh, the sensor stream kept per
+  session so scans can be re-processed later, an evidence score on every
+  wall, positioned photos, unscanned-space detection before you leave, and
+  an accuracy framework that only reports what a tape test showed. See
+  `Docs/CUBICASA_AUDIT.md` and `Docs/SCAN_PIPELINE.md`.
 
 > Internal names: the source folder is `FieldPlan/` and the engine package is
 > `FieldPlanCore` — deliberately unchanged so code history stays clean. The
@@ -61,7 +67,8 @@ Every measurement-critical calculation lives in `FieldPlanCore`, which has
 
 ```sh
 cd Packages/FieldPlanCore
-swift test        # 113 unit tests: parser, geometry, wall graph, QA, takeoff, exports
+swift test        # 174 unit tests: parser, geometry, wall graph, QA, takeoff, exports,
+                  # scan quality, coverage, evidence, missing-space detection, accuracy stats
 ```
 
 The test suite covers the spec's known shapes (10×10, 12×15, L-shape, angled

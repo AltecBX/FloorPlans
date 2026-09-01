@@ -149,6 +149,9 @@ public enum SVGExporter {
         case .annotation: return PenStyle(color: "#8A4B00", width: 0.9 * k, dash: nil)
         case .boundary: return PenStyle(color: "#7A7A7A", width: 1.2 * k, dash: "\(10 * k),\(6 * k)")
         case .symbol: return PenStyle(color: "#2A2A2A", width: 1.0 * k, dash: nil)
+        case .wallUncertain: return PenStyle(color: "#C77800", width: 2.2 * k, dash: "\(6 * k),\(4 * k)")
+        case .finding: return PenStyle(color: "#D9480F", width: 1.0 * k, dash: "\(4 * k),\(3 * k)")
+        case .photoMarker: return PenStyle(color: "#0B57D0", width: 1.1 * k, dash: nil)
         }
     }
 

@@ -14,6 +14,11 @@ final class SettingsStore: ObservableObject {
     @AppStorage("defaultWastePercent") var defaultWastePercent = 10.0
     @AppStorage("jobsiteModeDefault") var jobsiteModeDefault = false
     @AppStorage("keepScreenAwakeDuringScan") var keepScreenAwakeDuringScan = true
+    /// Keep the sensor stream behind each scan (mesh, poses, keyframes,
+    /// photos) so it can be re-processed later and scored for confidence.
+    @AppStorage("recordSensorData") var recordSensorData = true
+    /// Draw low-evidence walls in the warning pen on the plan.
+    @AppStorage("showConfidenceOnPlan") var showConfidenceOnPlan = false
 
     // Company branding (spec §35).
     @AppStorage("companyName") var companyName = ""

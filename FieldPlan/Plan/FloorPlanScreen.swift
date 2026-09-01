@@ -3,8 +3,9 @@ import SwiftData
 import FieldPlanCore
 
 /// Floor plan viewer: render modes (existing/proposed/demolition/overlay),
-/// layer visibility, plan version switcher, side-by-side comparison, and the
-/// gateway to the editor (spec §14, §23–§25).
+/// layer visibility, plan version switcher, side-by-side comparison, scan
+/// findings, positioned photos, confidence, and the gateway to the editor
+/// (spec §14, §15, §17, §23–§25).
 struct FloorPlanScreen: View {
     @Environment(\.modelContext) private var context
     let project: ProjectRecord
@@ -19,8 +20,13 @@ struct FloorPlanScreen: View {
     @State private var showFixtures = true
     @State private var showLabels = true
     @State private var showAnnotations = true
+    @State private var showFindings = true
+    @State private var showPhotos = true
+    @State private var showConfidence = SettingsStore.shared.showConfidenceOnPlan
+    @State private var findingsByLevel: [UUID: [SpaceFinding]] = [:]
     @State private var errorMessage: String? = nil
     @State private var selectedInfo: String? = nil
+    @State private var selectedPhoto: PhotoRecord? = nil
 
     private var currentLevel: LevelGeometry? {
         guard let snapshot else { return nil }
@@ -28,6 +34,16 @@ struct FloorPlanScreen: View {
             return snapshot.levels.first { $0.id == levelID }
         }
         return snapshot.levels.first
+    }
+
+    /// Photos taken during a scan of this level, numbered in capture order.
+    private var positionedPhotos: [(index: Int, record: PhotoRecord)] {
+        guard let level = currentLevel else { return [] }
+        return project.photos
+            .filter { $0.levelID == level.id && $0.planPosition != nil }
+            .sorted { $0.createdAt < $1.createdAt }
+            .enumerated()
+            .map { ($0.offset + 1, $0.element) }
     }
 
     private func makeScene(mode: PlanRenderMode) -> PlanScene? {
@@ -41,7 +57,16 @@ struct FloorPlanScreen: View {
         options.showAreaLabels = showLabels
         options.showCeilingHeights = showCeilingHeights
         options.showAnnotations = showAnnotations
+        options.showConfidence = showConfidence
         options.formatter = SettingsStore.shared.formatter
+        if showFindings { options.findings = findingsByLevel[level.id] ?? [] }
+        if showPhotos {
+            options.photoMarkers = positionedPhotos.compactMap { entry in
+                guard let position = entry.record.planPosition else { return nil }
+                return PlanPhotoMarker(id: entry.record.id, position: position,
+                                       heading: entry.record.planHeading, label: "\(entry.index)")
+            }
+        }
         return PlanGenerator.scene(for: level, options: options)
     }
 
@@ -69,6 +94,9 @@ struct FloorPlanScreen: View {
             }
         }
         .onAppear(perform: load)
+        .sheet(item: $selectedPhoto) { photo in
+            PhotoDetailView(project: project, photo: photo)
+        }
         .alert("Error", isPresented: .constant(errorMessage != nil)) {
             Button("OK") { errorMessage = nil }
         } message: {
@@ -97,6 +125,13 @@ struct FloorPlanScreen: View {
                 .pickerStyle(.menu)
 
                 Spacer()
+
+                if let level = currentLevel, let findings = findingsByLevel[level.id], !findings.isEmpty {
+                    Label("\(findings.count)", systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.orange)
+                        .accessibilityLabel("\(findings.count) possible unscanned spaces")
+                }
 
                 Toggle(isOn: $compareSideBySide) {
                     Image(systemName: "rectangle.split.2x1")
@@ -141,6 +176,10 @@ struct FloorPlanScreen: View {
             Toggle("Fixtures", isOn: $showFixtures)
             Toggle("Furniture", isOn: $showFurniture)
             Toggle("Notes", isOn: $showAnnotations)
+            Divider()
+            Toggle("Unscanned Space", isOn: $showFindings)
+            Toggle("Photos", isOn: $showPhotos)
+            Toggle("Low-Confidence Walls", isOn: $showConfidence)
         } label: {
             Label("Layers", systemImage: "square.3.layers.3d.down.left")
         }
@@ -207,6 +246,11 @@ struct FloorPlanScreen: View {
             if levelID == nil || !s.levels.contains(where: { $0.id == levelID }) {
                 levelID = s.levels.first?.id
             }
+            var findings: [UUID: [SpaceFinding]] = [:]
+            for level in s.levels {
+                findings[level.id] = MissingSpaceDetector.findings(for: level, levels: s.levels)
+            }
+            findingsByLevel = findings
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -214,17 +258,49 @@ struct FloorPlanScreen: View {
 
     private func tapInfo(_ point: Vec2, tolerance: Double, level: LevelGeometry) {
         let formatter = SettingsStore.shared.formatter
+
+        // Photo markers first: they sit on top of everything else.
+        if showPhotos {
+            let nearest = positionedPhotos
+                .compactMap { entry -> (PhotoRecord, Double)? in
+                    guard let position = entry.record.planPosition else { return nil }
+                    return (entry.record, position.distance(to: point))
+                }
+                .min { $0.1 < $1.1 }
+            if let nearest, nearest.1 <= max(tolerance * 1.5, 0.25) {
+                selectedPhoto = nearest.0
+                return
+            }
+        }
+
+        // Findings: tapping the marker explains it.
+        if showFindings, let finding = (findingsByLevel[level.id] ?? []).first(where: {
+            $0.location.distance(to: point) <= max(tolerance * 1.5, 0.25)
+        }) {
+            withAnimation(.easeInOut(duration: 0.15)) { selectedInfo = finding.message }
+            return
+        }
+
         let hit = PlanHitTester.hit(point, level: level, tolerance: tolerance)
         withAnimation(.easeInOut(duration: 0.15)) {
             switch hit {
             case .wall(let id):
                 if let wall = level.wall(withID: id) {
-                    selectedInfo = "Wall — \(formatter.length(wall.length)) · H \(formatter.length(wall.height)) · \(wall.source.displayName)"
+                    var text = "Wall — \(formatter.length(wall.length)) · H \(formatter.length(wall.height)) · \(wall.source.displayName)"
+                    if let evidence = wall.evidence {
+                        text += " · Confidence \(evidence.percentText)"
+                    }
+                    if let thicknessSource = wall.thicknessSource, thicknessSource == .assumed {
+                        text += " · thickness assumed"
+                    }
+                    selectedInfo = text
                 }
             case .opening(let wallID, let openingID):
                 if let wall = level.wall(withID: wallID),
                    let opening = wall.openings.first(where: { $0.id == openingID }) {
-                    selectedInfo = "\(opening.kind.displayName) — \(formatter.length(opening.width)) × \(formatter.length(opening.height))"
+                    var text = "\(opening.kind.displayName) — \(formatter.length(opening.width)) × \(formatter.length(opening.height))"
+                    if let evidence = opening.evidence { text += " · Confidence \(evidence.percentText)" }
+                    selectedInfo = text
                 }
             case .fixture(let id):
                 if let fixture = level.fixtures.first(where: { $0.id == id }) {
@@ -232,7 +308,9 @@ struct FloorPlanScreen: View {
                 }
             case .room(let id):
                 if let room = level.room(withID: id) {
-                    selectedInfo = "\(room.name) — \(formatter.area(room.floorArea)) · Perimeter \(formatter.linearFeet(room.perimeter))"
+                    var text = "\(room.name) — \(formatter.area(room.floorArea)) · Perimeter \(formatter.linearFeet(room.perimeter))"
+                    if let evidence = room.evidence { text += " · Confidence \(evidence.percentText)" }
+                    selectedInfo = text
                 }
             case .corner(_, _, let position):
                 selectedInfo = "Corner at (\(formatter.length(position.x)), \(formatter.length(position.y)))"

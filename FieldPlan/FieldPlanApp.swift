@@ -17,8 +17,8 @@ enum AppInfo {
     /// it — the marketing version alone stays "1.0" forever, so a pull that
     /// silently failed looks identical to one that worked. Both this and
     /// `CURRENT_PROJECT_VERSION` are bumped on every push.
-    static let releaseDate = "August 30, 2026"
-    static let releaseNotes = "Real 3D furniture: 18 CC0 models for sofas, beds, toilets, tubs, appliances and cabinets, turned to face the room."
+    static let releaseDate = "September 1, 2026"
+    static let releaseNotes = "Scan engine: live quality advice and coverage map, sensor sessions recorded (mesh, poses, keyframes), evidence scores on every wall, positioned photos, unscanned-space detection after each save, and tape-test accuracy statistics."
 
     /// "1.1 (8)" — the string to quote when reporting a problem.
     static var versionAndBuild: String { "\(version) (\(build))" }

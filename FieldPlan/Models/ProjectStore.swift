@@ -54,6 +54,101 @@ final class ProjectStore: ObservableObject {
     func scansDir(_ id: UUID) -> URL { dir(id, "scans") }
     func photosDir(_ id: UUID) -> URL { dir(id, "photos") }
     func exportsDir(_ id: UUID) -> URL { dir(id, "exports") }
+    /// Sensor sessions: `sessions/<sessionID>/session.json` plus meshes,
+    /// keyframes and photos (spec §4, §21).
+    func sessionsDir(_ id: UUID) -> URL { dir(id, "sessions") }
+
+    func sessionDir(projectID: UUID, sessionID: UUID) -> URL {
+        sessionsDir(projectID).appendingPathComponent(sessionID.uuidString, isDirectory: true)
+    }
+
+    // MARK: - Sensor sessions
+
+    func loadSessionLog(projectID: UUID, sessionID: UUID) throws -> ScanSessionLog {
+        let url = sessionDir(projectID: projectID, sessionID: sessionID)
+            .appendingPathComponent(ScanSessionLog.fileName)
+        let data = try Data(contentsOf: url)
+        return try ProjectArchive.decoder().decode(ScanSessionLog.self, from: data)
+    }
+
+    /// Every mesh chunk a session wrote, decoded from its binary files.
+    func loadMeshChunks(projectID: UUID, sessionID: UUID) -> [MeshChunk] {
+        let meshDir = sessionDir(projectID: projectID, sessionID: sessionID)
+            .appendingPathComponent(ScanSessionLog.meshDirectory, isDirectory: true)
+        guard let files = try? FileManager.default.contentsOfDirectory(at: meshDir, includingPropertiesForKeys: nil) else {
+            return []
+        }
+        return files
+            .filter { $0.pathExtension == ScanSessionLog.meshFileExtension }
+            .compactMap { url in
+                guard let data = try? Data(contentsOf: url) else { return nil }
+                return try? MeshChunkCodec.decode(data)
+            }
+    }
+
+    /// Bytes used by a project's sensor sessions.
+    func sessionsSize(projectID: UUID) -> Int64 {
+        directorySize(sessionsDir(projectID))
+    }
+
+    func deleteSession(projectID: UUID, sessionID: UUID) {
+        try? FileManager.default.removeItem(at: sessionDir(projectID: projectID, sessionID: sessionID))
+    }
+
+    nonisolated func directorySize(_ url: URL) -> Int64 {
+        guard let enumerator = FileManager.default.enumerator(
+            at: url, includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey]) else { return 0 }
+        var total: Int64 = 0
+        for case let file as URL in enumerator {
+            guard let values = try? file.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey]),
+                  values.isRegularFile == true else { continue }
+            total += Int64(values.fileSize ?? 0)
+        }
+        return total
+    }
+
+    /// Turns a session's positioned photos into project photos so they show
+    /// in the gallery, the report and as markers on the plan (spec §17).
+    /// Room assignment comes from the level's geometry at save time.
+    @discardableResult
+    func importSessionPhotos(
+        _ log: ScanSessionLog, project: ProjectRecord, level: LevelGeometry?, context: ModelContext
+    ) -> [PhotoRecord] {
+        var records: [PhotoRecord] = []
+        let source = sessionDir(projectID: project.id, sessionID: log.id)
+            .appendingPathComponent(ScanSessionLog.photoDirectory, isDirectory: true)
+        let dir = photosDir(project.id)
+        for photo in log.photos {
+            let sourceURL = source.appendingPathComponent(photo.fileName)
+            guard let image = UIImage(contentsOfFile: sourceURL.path) else { continue }
+            let fileName = "\(photo.id.uuidString).jpg"
+            let thumbName = "\(photo.id.uuidString)-thumb.jpg"
+            do {
+                try FileManager.default.copyItem(at: sourceURL, to: dir.appendingPathComponent(fileName))
+            } catch {
+                guard let jpeg = image.jpegData(compressionQuality: 0.9) else { continue }
+                try? jpeg.write(to: dir.appendingPathComponent(fileName), options: .atomic)
+            }
+            if let thumbData = Self.thumbnail(of: image, maxDimension: 400).jpegData(compressionQuality: 0.7) {
+                try? thumbData.write(to: dir.appendingPathComponent(thumbName), options: .atomic)
+            }
+            let roomID = level?.rooms.first { GeometryOps.polygonContains($0.polygon, photo.planPosition) }?.id
+            let record = PhotoRecord(
+                id: photo.id, fileName: fileName, thumbnailFileName: thumbName,
+                caption: photo.caption, roomID: roomID, levelID: level?.id ?? photo.levelID,
+                createdAt: log.startedAt.addingTimeInterval(photo.time),
+                planX: photo.planPosition.x, planY: photo.planPosition.y,
+                planHeading: photo.planHeading, scanSessionID: log.id)
+            record.project = project
+            context.insert(record)
+            records.append(record)
+        }
+        if !records.isEmpty {
+            project.updatedAt = Date()
+            try? context.save()
+        }
+        return records
+    }
 
     // MARK: - Snapshots (geometry versions)
 
@@ -264,15 +359,27 @@ final class ProjectStore: ObservableObject {
         for s in source.scans {
             let r = ScanRecord(id: s.id, levelID: s.levelID, roomName: s.roomName,
                                capturedAt: s.capturedAt, rawDataFileName: s.rawDataFileName,
-                               usdzFileName: s.usdzFileName, isSampleData: s.isSampleData)
+                               usdzFileName: s.usdzFileName, isSampleData: s.isSampleData,
+                               sessionID: s.sessionID)
             r.project = copy
             context.insert(r)
         }
         for p in source.photos {
             let r = PhotoRecord(id: p.id, fileName: p.fileName, thumbnailFileName: p.thumbnailFileName,
                                 caption: p.caption, roomID: p.roomID, levelID: p.levelID,
-                                wallID: p.wallID, measurementID: p.measurementID, createdAt: p.createdAt)
+                                wallID: p.wallID, measurementID: p.measurementID, createdAt: p.createdAt,
+                                planX: p.planX, planY: p.planY, planHeading: p.planHeading,
+                                scanSessionID: p.scanSessionID)
             r.annotationData = p.annotationData
+            r.project = copy
+            context.insert(r)
+        }
+        for t in source.accuracyTests {
+            let r = AccuracyTestRecord(
+                name: t.name, knownValue: t.knownValue, appValue: t.appValue,
+                source: MeasurementSource(rawValue: t.sourceRaw) ?? .lidarScanned, kind: t.kind,
+                elementID: t.elementID, roomID: t.roomID, predictedConfidence: t.predictedConfidence,
+                alternateValue: t.alternateValue, scanSessionID: t.scanSessionID, notes: t.notes)
             r.project = copy
             context.insert(r)
         }
@@ -332,24 +439,34 @@ final class ProjectStore: ObservableObject {
                     capturedAt: scan.capturedAt,
                     rawDataFileName: scan.rawDataFileName.map { "scans/\($0)" },
                     usdzFileName: scan.usdzFileName.map { "scans/\($0)" },
-                    isSampleData: scan.isSampleData)
+                    isSampleData: scan.isSampleData,
+                    sensorSessionID: scan.sessionID)
             },
-            takeoffItems: project.takeoffItems.compactMap(\.item)
+            takeoffItems: project.takeoffItems.compactMap(\.item),
+            accuracySamples: project.accuracyTests.map(\.sample)
         )
         entries.append(ZipEntry(path: "project.json", data: try archive.jsonData()))
 
-        // Asset files by directory.
+        // Asset files by directory; sessions are nested (meshes, keyframes,
+        // photos) so they are walked recursively.
         func addFiles(from dir: URL, prefix: String) {
-            guard let files = try? FileManager.default.contentsOfDirectory(
-                at: dir, includingPropertiesForKeys: nil) else { return }
-            for file in files where !file.hasDirectoryPath {
+            guard let enumerator = FileManager.default.enumerator(
+                at: dir, includingPropertiesForKeys: [.isRegularFileKey]) else { return }
+            let base = dir.standardizedFileURL.path
+            for case let file as URL in enumerator {
+                guard let values = try? file.resourceValues(forKeys: [.isRegularFileKey]),
+                      values.isRegularFile == true else { continue }
+                let full = file.standardizedFileURL.path
+                guard full.hasPrefix(base) else { continue }
+                let relative = String(full.dropFirst(base.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
                 if let data = try? Data(contentsOf: file) {
-                    entries.append(ZipEntry(path: "\(prefix)/\(file.lastPathComponent)", data: data))
+                    entries.append(ZipEntry(path: "\(prefix)/\(relative)", data: data))
                 }
             }
         }
         addFiles(from: photosDir(project.id), prefix: "photos")
         addFiles(from: scansDir(project.id), prefix: "scans")
+        addFiles(from: sessionsDir(project.id), prefix: "sessions")
 
         let safeName = project.name
             .components(separatedBy: CharacterSet.alphanumerics.union(.whitespaces).inverted)
@@ -420,6 +537,7 @@ final class ProjectStore: ObservableObject {
         // Restore asset files.
         let photoDir = photosDir(project.id)
         let scanDir = scansDir(project.id)
+        let sessionRoot = sessionsDir(project.id)
         for entry in entries {
             if entry.path.hasPrefix("photos/") {
                 let name = String(entry.path.dropFirst("photos/".count))
@@ -429,6 +547,15 @@ final class ProjectStore: ObservableObject {
                 let name = String(entry.path.dropFirst("scans/".count))
                 guard !name.isEmpty, !name.contains("/"), !name.contains("..") else { continue }
                 try? entry.data.write(to: scanDir.appendingPathComponent(name), options: .atomic)
+            } else if entry.path.hasPrefix("sessions/") {
+                // Nested: sessions/<id>/meshes/<anchor>.fpmesh etc.
+                let relative = String(entry.path.dropFirst("sessions/".count))
+                let parts = relative.split(separator: "/").map(String.init)
+                guard !parts.isEmpty, parts.allSatisfy({ !$0.isEmpty && $0 != ".." && $0 != "." }) else { continue }
+                let target = parts.reduce(sessionRoot) { $0.appendingPathComponent($1) }
+                try? FileManager.default.createDirectory(
+                    at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try? entry.data.write(to: target, options: .atomic)
             }
         }
         for photo in archive.photos {
@@ -437,7 +564,9 @@ final class ProjectStore: ObservableObject {
                 id: photo.id, fileName: fileName,
                 thumbnailFileName: photo.thumbnailFileName.map { ($0 as NSString).lastPathComponent },
                 caption: photo.caption, roomID: photo.roomID, levelID: photo.levelID,
-                wallID: photo.wallID, measurementID: photo.measurementID, createdAt: photo.createdAt)
+                wallID: photo.wallID, measurementID: photo.measurementID, createdAt: photo.createdAt,
+                planX: photo.planX, planY: photo.planY, planHeading: photo.planHeading,
+                scanSessionID: photo.scanSessionID)
             record.project = project
             context.insert(record)
         }
@@ -447,12 +576,23 @@ final class ProjectStore: ObservableObject {
                 capturedAt: scan.capturedAt,
                 rawDataFileName: scan.rawDataFileName.map { ($0 as NSString).lastPathComponent },
                 usdzFileName: scan.usdzFileName.map { ($0 as NSString).lastPathComponent },
-                isSampleData: scan.isSampleData)
+                isSampleData: scan.isSampleData,
+                sessionID: scan.sensorSessionID)
             record.project = project
             context.insert(record)
         }
         for item in archive.takeoffItems {
             let record = TakeoffItemRecord(item: item)
+            record.project = project
+            context.insert(record)
+        }
+        for sample in archive.accuracySamples ?? [] {
+            let record = AccuracyTestRecord(
+                id: sample.id, name: sample.name, knownValue: sample.knownValue,
+                appValue: sample.measuredValue, source: .lidarScanned, kind: sample.kind,
+                elementID: sample.elementID, roomID: sample.roomID,
+                predictedConfidence: sample.predictedConfidence, alternateValue: sample.alternateValue,
+                scanSessionID: sample.scanSessionID, notes: sample.notes.isEmpty ? nil : sample.notes)
             record.project = project
             context.insert(record)
         }

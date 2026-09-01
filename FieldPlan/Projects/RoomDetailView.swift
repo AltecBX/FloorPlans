@@ -50,9 +50,15 @@ struct RoomDetailView: View {
                     StatRow(label: "Base Molding", value: formatter.linearFeet(calc.baseMoldingLength))
                     StatRow(label: "Crown Molding", value: formatter.linearFeet(calc.crownMoldingLength))
                     StatRow(label: "Doors / Windows", value: "\(calc.doorCount) / \(calc.windowCount)")
+                    if let evidence = room.evidence {
+                        StatRow(label: "Confidence (evidence)", value: evidence.percentText)
+                        if let coverage = evidence.coverage {
+                            StatRow(label: "Floor observed", value: String(format: "%.0f%%", coverage * 100))
+                        }
+                    }
                 }
 
-                Section("Wall Lengths") {
+                Section {
                     ForEach(Array(level.walls(for: room).enumerated()), id: \.element.id) { index, wall in
                         HStack {
                             Text("Wall \(index + 1)")
@@ -60,12 +66,24 @@ struct RoomDetailView: View {
                             Spacer()
                             Text(formatter.length(wall.length))
                                 .monospacedDigit()
+                            if let evidence = wall.evidence {
+                                Text(evidence.percentText)
+                                    .font(.caption2.weight(.semibold))
+                                    .padding(.horizontal, 5)
+                                    .padding(.vertical, 2)
+                                    .background(Capsule().fill(confidenceColor(evidence.band).opacity(0.18)))
+                                    .foregroundStyle(confidenceColor(evidence.band))
+                            }
                             Text(wall.source.displayName)
                                 .font(.caption2)
                                 .foregroundStyle(.tertiary)
                         }
                         .font(.subheadline)
                     }
+                } header: {
+                    Text("Wall Lengths")
+                } footer: {
+                    Text("The percentage is an evidence score — scanner confidence, mesh coverage and tracking — not a measured accuracy. Verify against a tape in Accuracy → Test From Plan.")
                 }
 
                 Section("Documentation") {
@@ -94,6 +112,14 @@ struct RoomDetailView: View {
         }
         .navigationTitle(room?.name ?? "Room")
         .onAppear(perform: load)
+    }
+
+    private func confidenceColor(_ band: ConfidenceBand) -> Color {
+        switch band {
+        case .high: return .green
+        case .medium: return .orange
+        case .low: return .red
+        }
     }
 
     private func load() {

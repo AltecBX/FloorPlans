@@ -33,6 +33,14 @@ public enum PlanGenerator {
         /// and the PDF report carry their own headers, so only standalone
         /// exports (PNG/SVG/DXF) set one.
         public var titleBlock: PlanTitleBlock? = nil
+        /// Missing-space findings to hatch on the plan (spec §15).
+        public var findings: [SpaceFinding] = []
+        /// Photos taken during the scan, drawn where they were taken (§17).
+        public var photoMarkers: [PlanPhotoMarker] = []
+        /// Draw walls whose evidence score is below `lowConfidenceThreshold`
+        /// in the warning pen so weak geometry is visible before it is trusted.
+        public var showConfidence = false
+        public var lowConfidenceThreshold = ConfidenceModel.mediumBand
         public var formatter = UnitFormatter()
         /// Dimension text height in plan meters.
         public var dimensionTextHeight = 0.16
@@ -118,11 +126,20 @@ public enum PlanGenerator {
             }
         }
 
+        // ---- Missing-space findings, hatched over the fills ----
+        for finding in options.findings {
+            emitFinding(finding) { add($0, to: .findings) }
+        }
+
         // ---- Walls with openings ----
         for wall in level.walls {
             guard includeElement(wall.changeStatus, mode: mode) else { continue }
             guard wall.length > 0.02 else { continue }
-            let pen = wallPen(for: wall.changeStatus, mode: mode)
+            var pen = wallPen(for: wall.changeStatus, mode: mode)
+            if options.showConfidence, wall.changeStatus == .existing,
+               let evidence = wall.evidence, evidence.confidence < options.lowConfidenceThreshold {
+                pen = .wallUncertain
+            }
             let fill = wallFill(for: wall.changeStatus, mode: mode)
             let kind = layerKind(for: wall.changeStatus, mode: mode)
             emitWall(wall, pen: pen, fill: fill, mode: mode) { add($0, to: kind == .walls ? primitiveLayer(for: $0, default: kind) : kind) }
@@ -269,6 +286,11 @@ public enum PlanGenerator {
             }
         }
 
+        // ---- Photo markers ----
+        for marker in options.photoMarkers {
+            emitPhotoMarker(marker) { add($0, to: .photos) }
+        }
+
         // ---- Bounds ----
         var bounds = level.bounds
         if bounds.isNull { bounds = Rect2(minX: 0, minY: 0, maxX: 1, maxY: 1) }
@@ -291,8 +313,8 @@ public enum PlanGenerator {
         }
 
         let orderedKinds: [PlanLayerKind] = [
-            .roomFills, .furniture, .fixtures, .walls, .demolition, .newConstruction,
-            .openings, .dimensions, .labels, .annotations, .decor,
+            .roomFills, .findings, .furniture, .fixtures, .walls, .demolition, .newConstruction,
+            .openings, .dimensions, .labels, .annotations, .photos, .decor,
         ]
         let planLayers = orderedKinds.compactMap { kind -> PlanLayer? in
             guard let prims = layers[kind], !prims.isEmpty else { return nil }
@@ -544,6 +566,76 @@ public enum PlanGenerator {
         default:
             break
         }
+    }
+
+    // MARK: - Findings and photo markers
+
+    /// A missing-space finding: hatched extent, dashed outline, a label and a
+    /// marker at the point to look at. Drawn in the warning pen so it is never
+    /// mistaken for geometry.
+    static func emitFinding(_ finding: SpaceFinding, emit: (PlanPrimitive) -> Void) {
+        if finding.region.count >= 3 {
+            emit(.polyline(points: finding.region, closed: true, pen: .finding))
+            let bounds = Rect2(containing: finding.region)
+            if finding.cells.isEmpty {
+                // Diagonal hatch across the rectangle.
+                let spacing = 0.3
+                let height = bounds.height
+                var c = bounds.minX - height
+                while c < bounds.maxX {
+                    // x = c + t·height, y = minY + t·height, t in [0,1], clipped to the rectangle.
+                    let t0 = max(0, (bounds.minX - c) / max(height, 1e-9))
+                    let t1 = min(1, (bounds.maxX - c) / max(height, 1e-9))
+                    if t1 > t0 {
+                        emit(.line(a: Vec2(c + t0 * height, bounds.minY + t0 * height),
+                                   b: Vec2(c + t1 * height, bounds.minY + t1 * height),
+                                   pen: .finding))
+                    }
+                    c += spacing
+                }
+            } else {
+                // One diagonal tick per raster cell, so the hatch follows the
+                // real shape of the void rather than its bounding box.
+                let area = max(finding.estimatedArea ?? 0, 1e-6)
+                let cell = (area / Double(finding.cells.count)).squareRoot()
+                let half = cell * 0.42
+                for center in finding.cells {
+                    emit(.line(a: center + Vec2(-half, -half), b: center + Vec2(half, half), pen: .finding))
+                }
+            }
+            let label = finding.kind == .footprintVoid ? "UNSCANNED?" : finding.kind.displayName.uppercased()
+            let textHeight = min(0.2, max(0.09, bounds.width * 0.1))
+            if PlanTextMetrics.width(label, height: textHeight) <= bounds.width * 0.95 {
+                emit(.text(string: label, position: bounds.center, height: textHeight,
+                           rotation: 0, anchor: .center, pen: .finding))
+            }
+        } else if finding.region.count == 2 {
+            emit(.line(a: finding.region[0], b: finding.region[1], pen: .finding))
+        }
+        emit(.circle(center: finding.location, radius: 0.12, pen: .finding, filled: false))
+        emit(.text(string: "!", position: finding.location, height: 0.16,
+                   rotation: 0, anchor: .center, pen: .finding))
+    }
+
+    /// A camera marker: circle with a view wedge in the direction the photo
+    /// looked, numbered so it pairs with the photo list.
+    static func emitPhotoMarker(_ marker: PlanPhotoMarker, emit: (PlanPrimitive) -> Void) {
+        let radius = 0.16
+        emit(.circle(center: marker.position, radius: radius, pen: .photoMarker, filled: false))
+        if let heading = marker.heading {
+            let spread = 0.42
+            let reach = 0.48
+            let a = marker.position + Vec2(cos(heading - spread), sin(heading - spread)) * reach
+            let b = marker.position + Vec2(cos(heading + spread), sin(heading + spread)) * reach
+            emit(.line(a: marker.position + Vec2(cos(heading - spread), sin(heading - spread)) * radius,
+                       b: a, pen: .photoMarker))
+            emit(.line(a: marker.position + Vec2(cos(heading + spread), sin(heading + spread)) * radius,
+                       b: b, pen: .photoMarker))
+            emit(.arc(center: marker.position, radius: reach,
+                      startAngle: heading - spread, endAngle: heading + spread, pen: .photoMarker))
+        }
+        emit(.text(string: marker.label, position: marker.position, height: radius * 1.15,
+                   rotation: 0, anchor: .center, pen: .photoMarker))
     }
 
     // MARK: - Dimensions

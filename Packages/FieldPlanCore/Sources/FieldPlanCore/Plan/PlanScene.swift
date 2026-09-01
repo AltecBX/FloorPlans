@@ -27,6 +27,26 @@ public enum PlanPen: String, Codable, CaseIterable, Sendable {
     case annotation       // field notes
     case boundary         // room boundary (polygon-only rooms) — light dashed
     case symbol           // scale bar, north arrow
+    case wallUncertain    // wall with low evidence — heavy, dashed, warning colour
+    case finding          // missing-space finding — hatch and outline
+    case photoMarker      // positioned photo marker
+}
+
+/// A photo taken during the scan, placed where it was taken from.
+public struct PlanPhotoMarker: Codable, Hashable, Identifiable, Sendable {
+    public var id: UUID
+    public var position: Vec2
+    /// Plan angle (radians) the camera faced, when known.
+    public var heading: Double?
+    /// Short label drawn in the marker, e.g. "3".
+    public var label: String
+
+    public init(id: UUID = UUID(), position: Vec2, heading: Double? = nil, label: String) {
+        self.id = id
+        self.position = position
+        self.heading = heading
+        self.label = label
+    }
 }
 
 /// A colour the engine decides, in the few places where the choice belongs to
@@ -109,6 +129,7 @@ public enum PlanPrimitive: Codable, Hashable, Sendable {
 
 public enum PlanLayerKind: String, Codable, CaseIterable, Sendable {
     case roomFills      // colour coding, drawn under everything
+    case findings       // missing-space hatches, over fills and under walls
     case walls
     case demolition
     case newConstruction
@@ -118,11 +139,13 @@ public enum PlanLayerKind: String, Codable, CaseIterable, Sendable {
     case dimensions
     case labels
     case annotations
+    case photos         // positioned photo markers
     case decor          // scale bar, north arrow
 
     public var displayName: String {
         switch self {
         case .roomFills: return "Room Colors"
+        case .findings: return "Unscanned Space"
         case .walls: return "Walls"
         case .demolition: return "Demolition"
         case .newConstruction: return "New Construction"
@@ -132,6 +155,7 @@ public enum PlanLayerKind: String, Codable, CaseIterable, Sendable {
         case .dimensions: return "Dimensions"
         case .labels: return "Room Labels"
         case .annotations: return "Notes"
+        case .photos: return "Photos"
         case .decor: return "Scale & North"
         }
     }

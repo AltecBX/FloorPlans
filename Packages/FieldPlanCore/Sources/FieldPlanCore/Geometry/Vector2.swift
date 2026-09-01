@@ -98,9 +98,26 @@ public struct Vec3: Codable, Hashable, Sendable {
     public static func - (a: Vec3, b: Vec3) -> Vec3 { Vec3(a.x - b.x, a.y - b.y, a.z - b.z) }
     public static func * (a: Vec3, s: Double) -> Vec3 { Vec3(a.x * s, a.y * s, a.z * s) }
 
+    public static func / (a: Vec3, s: Double) -> Vec3 { Vec3(a.x / s, a.y / s, a.z / s) }
+    public static func += (a: inout Vec3, b: Vec3) { a = a + b }
+
     public var length: Double { (x * x + y * y + z * z).squareRoot() }
 
     public func distance(to other: Vec3) -> Double { (self - other).length }
+
+    public func dot(_ other: Vec3) -> Double { x * other.x + y * other.y + z * other.z }
+
+    public func cross(_ other: Vec3) -> Vec3 {
+        Vec3(y * other.z - z * other.y,
+             z * other.x - x * other.z,
+             x * other.y - y * other.x)
+    }
+
+    public var normalized: Vec3 {
+        let len = length
+        guard len > 1e-12 else { return .zero }
+        return self / len
+    }
 
     /// Projects a scan-space point (Y up) onto plan coordinates.
     /// RoomPlan world space is right-handed with +Y up; the floor plane is XZ.

@@ -18,6 +18,11 @@ public struct PhotoMeta: Codable, Hashable, Identifiable, Sendable {
     public var createdAt: Date
     /// Annotation shapes drawn over the photo, serialized separately.
     public var annotationFileName: String?
+    /// Plan position and heading for photos taken during a scan (spec §17).
+    public var planX: Double?
+    public var planY: Double?
+    public var planHeading: Double?
+    public var scanSessionID: UUID?
 
     public init(
         id: UUID = UUID(),
@@ -29,7 +34,11 @@ public struct PhotoMeta: Codable, Hashable, Identifiable, Sendable {
         wallID: UUID? = nil,
         measurementID: UUID? = nil,
         createdAt: Date = Date(),
-        annotationFileName: String? = nil
+        annotationFileName: String? = nil,
+        planX: Double? = nil,
+        planY: Double? = nil,
+        planHeading: Double? = nil,
+        scanSessionID: UUID? = nil
     ) {
         self.id = id
         self.fileName = fileName
@@ -41,6 +50,10 @@ public struct PhotoMeta: Codable, Hashable, Identifiable, Sendable {
         self.measurementID = measurementID
         self.createdAt = createdAt
         self.annotationFileName = annotationFileName
+        self.planX = planX
+        self.planY = planY
+        self.planHeading = planHeading
+        self.scanSessionID = scanSessionID
     }
 }
 
@@ -86,6 +99,8 @@ public struct ScanSessionMeta: Codable, Hashable, Identifiable, Sendable {
     public var rawDataFileName: String?
     public var usdzFileName: String?
     public var isSampleData: Bool
+    /// Sensor session directory name under `sessions/`.
+    public var sensorSessionID: UUID?
 
     public init(
         id: UUID = UUID(),
@@ -94,7 +109,8 @@ public struct ScanSessionMeta: Codable, Hashable, Identifiable, Sendable {
         capturedAt: Date = Date(),
         rawDataFileName: String? = nil,
         usdzFileName: String? = nil,
-        isSampleData: Bool = false
+        isSampleData: Bool = false,
+        sensorSessionID: UUID? = nil
     ) {
         self.id = id
         self.levelID = levelID
@@ -103,6 +119,7 @@ public struct ScanSessionMeta: Codable, Hashable, Identifiable, Sendable {
         self.rawDataFileName = rawDataFileName
         self.usdzFileName = usdzFileName
         self.isSampleData = isSampleData
+        self.sensorSessionID = sensorSessionID
     }
 }
 
@@ -123,6 +140,8 @@ public struct ProjectArchive: Codable, Sendable {
     public var notes: [NoteMeta]
     public var scanSessions: [ScanSessionMeta]
     public var takeoffItems: [TakeoffItem]
+    /// Known-dimension tests recorded against this project's geometry.
+    public var accuracySamples: [AccuracySample]?
 
     public init(
         schemaVersion: Int = ProjectArchive.currentSchemaVersion,
@@ -135,7 +154,8 @@ public struct ProjectArchive: Codable, Sendable {
         photos: [PhotoMeta] = [],
         notes: [NoteMeta] = [],
         scanSessions: [ScanSessionMeta] = [],
-        takeoffItems: [TakeoffItem] = []
+        takeoffItems: [TakeoffItem] = [],
+        accuracySamples: [AccuracySample]? = nil
     ) {
         self.schemaVersion = schemaVersion
         self.exportedAt = exportedAt
@@ -148,6 +168,7 @@ public struct ProjectArchive: Codable, Sendable {
         self.notes = notes
         self.scanSessions = scanSessions
         self.takeoffItems = takeoffItems
+        self.accuracySamples = accuracySamples
     }
 
     // MARK: - Serialization

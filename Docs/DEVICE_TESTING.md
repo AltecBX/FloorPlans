@@ -38,6 +38,38 @@ PDF report, and every export (PNG/SVG/DXF/CSV/JSON/.fieldplan).
 8. **Jobsite mode**: brightness up, gloves if you use them — buttons must
    remain hittable; screen must stay awake during an active scan.
 
+## Scan engine (build 12) — verify on the property
+
+9. **Recorder attached**: within a few seconds of starting a room the status
+   strip shows speed/tracking/light and the mesh count climbs; the minimap
+   fills with green floor cells behind you. If the strip never appears, the
+   recorder did not receive frames — check the log for "re-attached".
+10. **Advice**: jog for two seconds → "Slow down"; spin → "Turn slowly"; cover
+    the camera → tracking advice in red. Chips must not flicker.
+11. **Coverage**: walk one wall of a room and not the opposite one; after
+    ~20 s the minimap shows the walked wall green and the far wall orange/red
+    and "Wall not fully captured" appears.
+12. **Photo**: tap the camera button twice; after Finish & Save the plan shows
+    markers 1 and 2 where you stood, facing the way you looked; tapping opens
+    the photo; the report's plan page carries the same markers.
+13. **Findings**: scan two rooms but skip the one between them; the review
+    sheet after saving should hatch the skipped space and name the doorway
+    that leads into it. "Scan More" keeps the AR frame; "Use As Is" opens
+    the plan with the Unscanned Space layer on.
+14. **Evidence**: tap a wall on the plan — "Confidence NN%"; Room Detail shows
+    a band per wall. Accuracy → Wall Evidence counts add up to the scanned
+    walls.
+15. **Accuracy tests**: Accuracy → Test From Plan → tap a wall → enter the
+    tape length. Repeat on 6–10 walls, doors and windows; the statistics
+    section fills in. Scan the same room twice with the same test names and
+    Repeated Scans shows the spread.
+16. **Curved wall**: scan a room with a curved wall; the plan should follow
+    the curve and bulge the correct way. If it bulges outward when the wall
+    bulges in, report it — the arc convention is then mirrored in
+    `ScanConversion.curvedWallSegments`.
+17. **Storage**: Settings shows the sensor-data toggle; a 5-minute scan should
+    add roughly 20–60 MB under the project's `sessions/` folder.
+
 ## Known limitations to verify/accept
 
 - Rooms scanned in *separate* sessions do not share a coordinate space; they

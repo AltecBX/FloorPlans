@@ -323,6 +323,19 @@ enum ReportBuilder {
                     composer.newPage()
                     composer.heading("\(title) — \(level.name)")
 
+                    // Photos taken during the scan are marked where they were
+                    // taken, numbered to match the photo pages.
+                    generatorOptions.photoMarkers = project.photos
+                        .filter { $0.levelID == level.id && $0.planPosition != nil }
+                        .sorted { $0.createdAt < $1.createdAt }
+                        .enumerated()
+                        .compactMap { index, record in
+                            record.planPosition.map {
+                                PlanPhotoMarker(id: record.id, position: $0, heading: record.planHeading,
+                                                label: "\(index + 1)")
+                            }
+                        }
+
                     let totalArea = level.rooms.reduce(0.0) { $0 + $1.floorArea }
                     if totalArea > 0 {
                         composer.text("Total: \(formatter.area(totalArea))",
@@ -460,10 +473,12 @@ enum ReportBuilder {
                     let scale = min(cellWidth / image.size.width, (cellHeight - 26) / image.size.height)
                     let size = CGSize(width: image.size.width * scale, height: image.size.height * scale)
                     image.draw(in: CGRect(x: x, y: composer.cursor, width: size.width, height: size.height))
+                    let positioned = photos.filter { $0.planPosition != nil }
+                    let markerNumber = positioned.firstIndex { $0.id == record.id }.map { "#\($0 + 1)  " } ?? ""
                     let caption = NSAttributedString(
-                        string: record.caption.isEmpty
+                        string: markerNumber + (record.caption.isEmpty
                             ? record.createdAt.formatted(date: .abbreviated, time: .shortened)
-                            : record.caption,
+                            : record.caption),
                         attributes: [.font: Fonts.small, .foregroundColor: UIColor.darkGray])
                     caption.draw(in: CGRect(
                         x: x, y: composer.cursor + size.height + 3,
@@ -509,6 +524,26 @@ enum ReportBuilder {
                     rows: sourceCounts.sorted { $0.value > $1.value }.map { [$0.key, "\($0.value)"] })
                 composer.text("Field measurements recorded: \(measurements.count)")
                 composer.text("Critical dimensions: \(critical.count) — verified: \(critical.count - unverifiedCritical.count), unverified: \(unverifiedCritical.count)")
+
+                // Evidence behind the scanned walls, and the tested accuracy
+                // — the only accuracy figure the report will ever state.
+                let scored = snapshot.levels.flatMap(\.walls).compactMap(\.evidence)
+                if !scored.isEmpty {
+                    let high = scored.filter { $0.band == .high }.count
+                    let medium = scored.filter { $0.band == .medium }.count
+                    let low = scored.filter { $0.band == .low }.count
+                    composer.text("Scanned walls by evidence score: \(high) high, \(medium) medium, \(low) low. Scores reflect scanner confidence, LiDAR mesh coverage and tracking quality; they are not accuracy claims.")
+                }
+                let samples = project.accuracyTests.map(\.sample).filter { !$0.kind.isArea }
+                if let stats = AccuracyStatistics.compute(samples) {
+                    let inch = UnitConstants.metersPerInch
+                    composer.text(String(
+                        format: "Tape-verified accuracy on this property (%d tests): mean error %.2f\", median %.2f\", 95th percentile %.2f\", maximum %.2f\".",
+                        stats.count, stats.meanAbsoluteError / inch, stats.medianAbsoluteError / inch,
+                        stats.p95AbsoluteError / inch, stats.maxAbsoluteError / inch))
+                } else {
+                    composer.text("No tape-verified accuracy tests were recorded for this property.", color: .darkGray)
+                }
                 if !unverifiedCritical.isEmpty {
                     composer.text(
                         "Unverified critical dimensions: \(unverifiedCritical.map(\.name).joined(separator: ", ")). Verify before fabrication or ordering.",

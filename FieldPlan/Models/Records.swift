@@ -145,6 +145,8 @@ final class ScanRecord {
     var rawDataFileName: String?
     var usdzFileName: String?
     var isSampleData: Bool
+    /// The sensor session (`sessions/<id>/`) this capture was recorded in.
+    var sessionID: UUID?
     var project: ProjectRecord?
 
     init(
@@ -154,7 +156,8 @@ final class ScanRecord {
         capturedAt: Date = Date(),
         rawDataFileName: String? = nil,
         usdzFileName: String? = nil,
-        isSampleData: Bool = false
+        isSampleData: Bool = false,
+        sessionID: UUID? = nil
     ) {
         self.id = id
         self.levelID = levelID
@@ -163,6 +166,7 @@ final class ScanRecord {
         self.rawDataFileName = rawDataFileName
         self.usdzFileName = usdzFileName
         self.isSampleData = isSampleData
+        self.sessionID = sessionID
     }
 }
 
@@ -179,6 +183,13 @@ final class PhotoRecord {
     var createdAt: Date
     /// Serialized annotation shapes (PhotoAnnotationDocument JSON).
     var annotationData: Data?
+    /// Where the photo was taken from on the plan (meters), when it was
+    /// taken during a scan (spec §17). Nil for imported or jobsite photos.
+    var planX: Double?
+    var planY: Double?
+    /// Plan angle (radians) the camera faced.
+    var planHeading: Double?
+    var scanSessionID: UUID?
     var project: ProjectRecord?
 
     init(
@@ -190,7 +201,11 @@ final class PhotoRecord {
         levelID: UUID? = nil,
         wallID: UUID? = nil,
         measurementID: UUID? = nil,
-        createdAt: Date = Date()
+        createdAt: Date = Date(),
+        planX: Double? = nil,
+        planY: Double? = nil,
+        planHeading: Double? = nil,
+        scanSessionID: UUID? = nil
     ) {
         self.id = id
         self.fileName = fileName
@@ -201,13 +216,24 @@ final class PhotoRecord {
         self.wallID = wallID
         self.measurementID = measurementID
         self.createdAt = createdAt
+        self.planX = planX
+        self.planY = planY
+        self.planHeading = planHeading
+        self.scanSessionID = scanSessionID
+    }
+
+    /// Plan position, when the photo was taken during a scan.
+    var planPosition: Vec2? {
+        guard let planX, let planY else { return nil }
+        return Vec2(planX, planY)
     }
 
     var photoMeta: PhotoMeta {
         PhotoMeta(
             id: id, fileName: fileName, thumbnailFileName: thumbnailFileName,
             caption: caption, roomID: roomID, levelID: levelID, wallID: wallID,
-            measurementID: measurementID, createdAt: createdAt
+            measurementID: measurementID, createdAt: createdAt,
+            planX: planX, planY: planY, planHeading: planHeading, scanSessionID: scanSessionID
         )
     }
 }
@@ -378,26 +404,71 @@ final class TakeoffItemRecord {
 }
 
 /// Known-dimension accuracy test (spec §31): compare a value the app produced
-/// against a trusted physical measurement.
+/// against a trusted physical measurement. Feeds `AccuracyStatistics` — the
+/// only source of any accuracy figure the app shows.
 @Model
 final class AccuracyTestRecord {
     @Attribute(.unique) var id: UUID
     var name: String
-    /// Meters.
+    /// Meters (square meters for areas).
     var knownValue: Double
     var appValue: Double
     var sourceRaw: String
     var createdAt: Date
+    /// `AccuracyMeasureKind` raw value; nil on records from before kinds existed.
+    var kindRaw: String?
+    /// The wall / opening / room the app value was read from.
+    var elementID: UUID?
+    var roomID: UUID?
+    /// Evidence score the element carried when the test was recorded.
+    var predictedConfidence: Double?
+    /// A second method's value for the same element (e.g. mesh line fit).
+    var alternateValue: Double?
+    var scanSessionID: UUID?
+    var notes: String?
     var project: ProjectRecord?
 
-    init(id: UUID = UUID(), name: String, knownValue: Double, appValue: Double, source: MeasurementSource) {
+    init(
+        id: UUID = UUID(),
+        name: String,
+        knownValue: Double,
+        appValue: Double,
+        source: MeasurementSource,
+        kind: AccuracyMeasureKind = .custom,
+        elementID: UUID? = nil,
+        roomID: UUID? = nil,
+        predictedConfidence: Double? = nil,
+        alternateValue: Double? = nil,
+        scanSessionID: UUID? = nil,
+        notes: String? = nil
+    ) {
         self.id = id
         self.name = name
         self.knownValue = knownValue
         self.appValue = appValue
         self.sourceRaw = source.rawValue
         self.createdAt = Date()
+        self.kindRaw = kind.rawValue
+        self.elementID = elementID
+        self.roomID = roomID
+        self.predictedConfidence = predictedConfidence
+        self.alternateValue = alternateValue
+        self.scanSessionID = scanSessionID
+        self.notes = notes
     }
 
     var delta: Double { appValue - knownValue }
+
+    var kind: AccuracyMeasureKind {
+        get { kindRaw.flatMap { AccuracyMeasureKind(rawValue: $0) } ?? .custom }
+        set { kindRaw = newValue.rawValue }
+    }
+
+    var sample: AccuracySample {
+        AccuracySample(
+            id: id, kind: kind, name: name, knownValue: knownValue, measuredValue: appValue,
+            alternateValue: alternateValue, predictedConfidence: predictedConfidence,
+            elementID: elementID, roomID: roomID, scanSessionID: scanSessionID,
+            recordedAt: createdAt, notes: notes ?? "")
+    }
 }

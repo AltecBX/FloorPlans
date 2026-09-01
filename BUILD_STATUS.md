@@ -1,6 +1,71 @@
 # BUILD STATUS
 
-_Last updated: 2026-08-30_
+_Last updated: 2026-09-01_
+
+## 2026-09-01 — Build 12 (version 1.2): scan engine stage 1
+
+Driven by the CubiCasa benchmark audit (`Docs/CUBICASA_AUDIT.md`) and the
+pipeline design (`Docs/SCAN_PIPELINE.md`). Accuracy and reliability first.
+
+- **Sensor sessions are recorded** (`ScanRecorder`): the recorder joins the
+  RoomPlan `ARSession`'s delegate chain (forwarding to whatever was there) and
+  writes `sessions/<id>/` — `session.json` with 10 Hz camera poses (tracking
+  state, depth availability and confidence shares, light estimate, mapping
+  status), 20 Hz gyro/gravity, compass headings paired with the camera's
+  heading, pose-tagged keyframes every 0.8 m / 25°, positioned photos, and one
+  binary `MeshChunk` per LiDAR mesh anchor (latest revision, with ARKit's
+  per-face classification when present). Checkpointed every 30 s. RoomPlan's
+  configuration is never touched.
+- **Live scan quality** (`ScanQualityEngine`, core, tested): tracking state,
+  speed, rotation, light and LiDAR confidence with enter/exit hysteresis and
+  minimum display times; RoomPlan's own coaching folds into the same
+  prioritised list. The scan screen shows one chip, a status strip and the
+  elapsed/observed-floor counters.
+- **Coverage map** (`CoverageGrid`, core, tested): floor/wall/opening mesh
+  evidence per 0.25 m cell, per-wall coverage with the uncovered ranges,
+  corner and opening coverage. Classification uses ARKit's labels when the
+  session provides them and a normal-plus-height fallback otherwise. Wall
+  coverage only counts faces that run along the wall, so a corner does not
+  credit both walls. The minimap draws it live with the walk and the walls
+  RoomPlan has found so far, coloured by coverage.
+- **Evidence on every scanned element** (`ElementEvidence`, `ConfidenceModel`,
+  `EvidenceAttachment`): scanner bucket × coverage × tracking × observations,
+  clamped to 5–99 %, with the factors recorded. Shown on tap in the plan, in
+  Room Detail and on the Accuracy screen; the report states the band counts.
+  Documented as an evidence score, not an accuracy claim.
+- **Missing-space detection** (`MissingSpaceDetector`, core, tested): a
+  footprint raster finds enclosed cells no room explains, doorways whose far
+  side is unscanned, room edges with no wall behind them, and stairs with no
+  adjacent level. After every save a review sheet hatches them on the plan and
+  offers "Scan More" / "Use As Is"; the plan viewer keeps an Unscanned Space
+  layer and the Accuracy screen lists them.
+- **Accuracy framework** (`AccuracySample`, `AccuracyStatistics`,
+  `AccuracyAnalysis`, core, tested): MAE / median / p95 / max / bias / RMS,
+  percent errors, share within ½", 1" and 3 %, per-kind breakdown,
+  repeat-scan standard deviation by name, confidence-bin calibration and
+  primary-versus-alternate comparison. **Test From Plan** picks a wall, door,
+  window or room and records its app value, element id and evidence score
+  with the tape value. The report prints these statistics and nothing else as
+  accuracy.
+- **Positioned photos** (`PositionedPhotoRecord` → `PhotoRecord.planX/Y/
+  heading`): the camera button on the scan screen stores a full-resolution
+  JPEG with the pose; photos become numbered markers with a view wedge on the
+  plan and in the report, and tapping a marker opens the photo.
+- **Bridge fills in what RoomPlan already reports**: `door(isOpen:)`,
+  `Surface.curve` (curved walls traced into arc segments with a chord and
+  floor-outline sanity check), `story`, every `Section` with its centre
+  (`splitIntoRooms` now types faces from sections and fixtures together), and
+  object attributes/parents.
+- **North** from the compass (`NorthEstimator`) when the level has none;
+  `LevelGeometry.elevation` from the mesh floor.
+- Model additions are all optional (`thicknessSource`, `evidence`, door
+  `style`, `isOpenAtCapture`, `elevation`, `scanSessionIDs`,
+  `schemaVersion`), so existing project files decode unchanged (tested).
+- `.fieldplan` packages now carry `sessions/` and accuracy samples.
+- Core suite: 174 tests, all passing on Linux. The iOS layer was
+  syntax-checked here; `ScanRecorder.swift` is new and ARKit-heavy and must be
+  compiled on the owner's Mac. Known one-liners if the SDK disagrees:
+  `CapturedRoom.Object.story` / `.parentIdentifier` in `ScanSupport.swift`.
 
 ## Output validation (done in CI environment)
 

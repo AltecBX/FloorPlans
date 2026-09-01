@@ -9,6 +9,8 @@ import FieldPlanCore
 // Owns the RoomCaptureView and session across a multi-room flow. The
 // ARSession is kept alive between rooms (stop(pauseARSession: false)) so all
 // rooms in one flow share a coordinate space and merge cleanly (spec §8).
+// A ScanRecorder rides on the same ARSession and keeps the sensor stream,
+// the live quality advice and the coverage map (spec §4–§6).
 
 @MainActor
 final class ScanCoordinator: NSObject, ObservableObject {
@@ -27,11 +29,13 @@ final class ScanCoordinator: NSObject, ObservableObject {
     @Published var acceptedRoomNames: [String] = []
     @Published var liveWallCount = 0
     @Published var currentRoomName = ""
+    @Published private(set) var recorder: ScanRecorder? = nil
 
     let captureView = RoomCaptureView(frame: .zero)
     private(set) var pendingRoom: CapturedRoom? = nil
     private(set) var acceptedRooms: [(name: String, room: CapturedRoom)] = []
     private var sessionActive = false
+    private var lastLiveRoomForward: TimeInterval = 0
 
     override init() {
         super.init()
@@ -39,13 +43,30 @@ final class ScanCoordinator: NSObject, ObservableObject {
         captureView.captureSession.delegate = self
     }
 
-    func startRoom(named name: String) {
+    func startRoom(named name: String, projectID: UUID, levelID: UUID?) {
         currentRoomName = name
         pendingRoom = nil
         var configuration = RoomCaptureSession.Configuration()
         configuration.isCoachingEnabled = true
         captureView.captureSession.run(configuration: configuration)
         sessionActive = true
+
+        // One recorder per flow: it observes the shared ARSession, so every
+        // room scanned without leaving this screen lands in one session log.
+        if recorder == nil, SettingsStore.shared.recordSensorData {
+            let recorder = ScanRecorder(
+                projectID: projectID, levelID: levelID,
+                directory: ProjectStore.shared.sessionsDir(projectID))
+            recorder.attach(to: captureView.captureSession.arSession)
+            self.recorder = recorder
+            // RoomPlan may install its own delegate after `run`; make sure the
+            // recorder is still in the chain once frames should be flowing.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak recorder] in
+                recorder?.ensureAttached()
+            }
+        }
+        recorder?.record(.roomStarted, detail: name)
+
         phase = .scanning
         if SettingsStore.shared.keepScreenAwakeDuringScan {
             UIApplication.shared.isIdleTimerDisabled = true
@@ -64,6 +85,7 @@ final class ScanCoordinator: NSObject, ObservableObject {
         captureView.captureSession.stop(pauseARSession: false)
         sessionActive = false
         pendingRoom = nil
+        recorder?.record(.roomDiscarded, detail: currentRoomName)
         phase = .ready
         UIApplication.shared.isIdleTimerDisabled = false
     }
@@ -72,6 +94,8 @@ final class ScanCoordinator: NSObject, ObservableObject {
         guard let room = pendingRoom else { return }
         acceptedRooms.append((currentRoomName, room))
         acceptedRoomNames.append(currentRoomName)
+        recorder?.noteAcceptedRoom(room.identifier)
+        recorder?.record(.roomFinished, detail: currentRoomName)
         pendingRoom = nil
         phase = .ready
         UIApplication.shared.isIdleTimerDisabled = false
@@ -79,6 +103,7 @@ final class ScanCoordinator: NSObject, ObservableObject {
 
     func discardPendingRoom() {
         pendingRoom = nil
+        recorder?.record(.roomDiscarded, detail: currentRoomName)
         phase = .ready
     }
 
@@ -88,17 +113,34 @@ final class ScanCoordinator: NSObject, ObservableObject {
         acceptedRoomNames.removeAll()
     }
 
+    /// Takes a positioned photo from the next camera frame (spec §17).
+    func takePhoto() {
+        recorder?.takePhoto()
+    }
+
     /// Handles app interruption (phone call, backgrounding) — spec §46.
     /// Accepted rooms are already safe; only the in-progress room is lost.
     func handleInterruption() {
         guard phase == .scanning else { return }
         captureView.captureSession.stop(pauseARSession: false)
         sessionActive = false
+        recorder?.record(.interrupted, detail: "app inactive")
         phase = .failed("Scanning was interrupted. Rooms already accepted are saved — rescan the room that was in progress.")
         UIApplication.shared.isIdleTimerDisabled = false
     }
 
+    /// Closes the sensor session and hands back its log and coverage map.
+    /// The next room starts a fresh session on the same AR frame.
+    func finishRecorder() -> (log: ScanSessionLog, grid: CoverageGrid?)? {
+        guard let recorder else { return nil }
+        let grid = recorder.coverageGrid
+        let log = recorder.finish()
+        self.recorder = nil
+        return (log, grid)
+    }
+
     func endFlow() {
+        _ = finishRecorder()
         if sessionActive {
             captureView.captureSession.stop()
         }
@@ -166,15 +208,23 @@ extension ScanCoordinator: RoomCaptureSessionDelegate {
         case .normal: text = nil
         @unknown default: text = nil
         }
+        let kind = CapturedRoomBridge.adviceKind(for: instruction)
         Task { @MainActor in
             self.instructionText = text
+            self.recorder?.setInstruction(kind)
         }
     }
 
     nonisolated func captureSession(_ session: RoomCaptureSession, didUpdate room: CapturedRoom) {
         let walls = room.walls.count
+        let now = ProcessInfo.processInfo.systemUptime
         Task { @MainActor in
             self.liveWallCount = walls
+            // The live room feeds wall coverage; once a second is plenty.
+            if let recorder = self.recorder, now - self.lastLiveRoomForward >= 1.0 {
+                self.lastLiveRoomForward = now
+                recorder.updateLiveRoom(CapturedRoomBridge.dto(from: room, name: nil))
+            }
         }
     }
 
@@ -204,7 +254,7 @@ struct RoomCaptureHostView: UIViewRepresentable {
 // MARK: - Scan flow screen
 
 /// Complete scan workflow (spec §8): pick level → name room → scan → review →
-/// accept/rescan → next room → finish level → merge → save.
+/// accept/rescan → next room → finish level → merge → save → review findings.
 struct ScanFlowView: View {
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
@@ -220,6 +270,9 @@ struct ScanFlowView: View {
     @State private var saving = false
     @State private var saveError: String? = nil
     @State private var finished = false
+    @State private var reviewLevel: LevelGeometry? = nil
+    @State private var reviewFindings: [SpaceFinding] = []
+    @State private var showReview = false
 
     var body: some View {
         Group {
@@ -299,11 +352,18 @@ struct ScanFlowView: View {
                     .padding(.horizontal)
                 }
 
-                Text("Scan connected rooms in one session — walking room to room without closing the scanner keeps everything aligned on one plan.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 24)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("How to scan")
+                        .font(.headline)
+                    Text("Start on the lowest floor. Hold the phone at chest height, pointed where you are walking, 5–10 ft from the walls with the floor line in view. Walk along the walls rather than turning in the middle of the room; back out of small spaces instead of spinning. Pause and pan up for cabinets and windows. Scan closets from the doorway. Keep going room to room — the coverage map shows what has been seen.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding()
+                .background(RoundedRectangle(cornerRadius: AppTheme.corner)
+                    .fill(Color(.secondarySystemGroupedBackground)))
+                .padding(.horizontal)
 
                 Button {
                     showNameSheet = true
@@ -344,10 +404,25 @@ struct ScanFlowView: View {
             RoomNameSheet(roomName: $roomName, roomType: $roomType) {
                 // Blank name = auto-label from the scan (room type detection
                 // plus fixtures found inside), CubiCasa-style.
-                coordinator.startRoom(named: roomName.trimmingCharacters(in: .whitespaces))
+                coordinator.startRoom(
+                    named: roomName.trimmingCharacters(in: .whitespaces),
+                    projectID: project.id,
+                    levelID: selectedLevelID ?? snapshot?.levels.first?.id)
                 roomName = ""
             }
             .presentationDetents([.medium])
+        }
+        .sheet(isPresented: $showReview) {
+            if let reviewLevel {
+                ScanReviewSheet(
+                    level: reviewLevel,
+                    findings: reviewFindings,
+                    onScanMore: { showReview = false },
+                    onDone: {
+                        showReview = false
+                        finished = true
+                    })
+            }
         }
         .alert("Save Error", isPresented: .constant(saveError != nil)) {
             Button("OK") { saveError = nil }
@@ -367,24 +442,34 @@ struct ScanFlowView: View {
                 .ignoresSafeArea()
 
             VStack {
-                if let instruction = coordinator.instructionText {
-                    Text(instruction)
-                        .font(.headline)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 10)
-                        .background(Capsule().fill(.ultraThinMaterial))
-                        .transition(.opacity)
+                if let recorder = coordinator.recorder, coordinator.phase == .scanning {
+                    ScanLiveOverlay(
+                        recorder: recorder,
+                        roomName: coordinator.currentRoomName,
+                        wallCount: coordinator.liveWallCount,
+                        onPhoto: { coordinator.takePhoto() })
+                } else {
+                    if let instruction = coordinator.instructionText, coordinator.phase == .scanning {
+                        Text(instruction)
+                            .font(.headline)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 10)
+                            .background(Capsule().fill(.ultraThinMaterial))
+                            .transition(.opacity)
+                    }
+                    Spacer()
                 }
-                Spacer()
 
                 switch coordinator.phase {
                 case .scanning:
                     VStack(spacing: 10) {
-                        Text("\(coordinator.currentRoomName.isEmpty ? "Scanning" : coordinator.currentRoomName) — \(coordinator.liveWallCount) walls detected")
-                            .font(.subheadline)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .background(Capsule().fill(.ultraThinMaterial))
+                        if coordinator.recorder == nil {
+                            Text("\(coordinator.currentRoomName.isEmpty ? "Scanning" : coordinator.currentRoomName) — \(coordinator.liveWallCount) walls detected")
+                                .font(.subheadline)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 6)
+                                .background(Capsule().fill(.ultraThinMaterial))
+                        }
                         HStack(spacing: 12) {
                             Button {
                                 coordinator.cancelRoom()
@@ -414,6 +499,15 @@ struct ScanFlowView: View {
                                 .padding(.horizontal, 12)
                                 .padding(.vertical, 6)
                                 .background(Capsule().fill(.ultraThinMaterial))
+                            let low = room.walls.filter { $0.confidence == .low }.count
+                            if low > 0 {
+                                Text("\(low) wall(s) at low scanner confidence — consider rescanning")
+                                    .font(.footnote)
+                                    .foregroundStyle(.orange)
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 6)
+                                    .background(Capsule().fill(.ultraThinMaterial))
+                            }
                         }
                         HStack(spacing: 12) {
                             Button {
@@ -453,7 +547,8 @@ struct ScanFlowView: View {
         }
     }
 
-    /// Persists everything: raw scans, USDZ, converted geometry (spec §8, §10).
+    /// Persists everything: raw scans, USDZ, the sensor session, converted
+    /// geometry with its evidence, positioned photos (spec §8, §10, §17, §21).
     private func finishLevel() async {
         guard let snapshot, let levelID = selectedLevelID ?? snapshot.levels.first?.id else { return }
         saving = true
@@ -461,6 +556,9 @@ struct ScanFlowView: View {
 
         let store = ProjectStore.shared
         let scansDir = store.scansDir(project.id)
+
+        // 0. Close the sensor session first; its evidence attaches below.
+        let session = coordinator.finishRecorder()
 
         // 1. Persist raw per-room scans immediately (data preservation first).
         for (name, room) in coordinator.acceptedRooms {
@@ -484,7 +582,8 @@ struct ScanFlowView: View {
             let record = ScanRecord(
                 id: scanID, levelID: levelID,
                 roomName: name.isEmpty ? "Auto-labeled room" : name,
-                rawDataFileName: rawName, usdzFileName: usdzName)
+                rawDataFileName: rawName, usdzFileName: usdzName,
+                sessionID: session?.log.id)
             record.project = project
             context.insert(record)
         }
@@ -519,14 +618,43 @@ struct ScanFlowView: View {
                 return
             }
             level = ScanConversion.merge(conversion, into: level)
+
+            // 4. Evidence: coverage and tracking from the session score every
+            // scanned element; the compass places north; the floor's height
+            // records where this level sits in the scan frame.
+            if let session {
+                level = EvidenceAttachment.attach(
+                    to: level,
+                    grid: session.grid,
+                    trackingNormalFraction: session.log.summary?.trackingNormalFraction,
+                    sessionID: session.log.id)
+                level.scanSessionIDs = (level.scanSessionIDs ?? []) + [session.log.id]
+                if level.elevation == nil { level.elevation = session.grid?.floorElevation }
+                if level.northAngle == nil,
+                   let north = NorthEstimator.northAngle(from: session.log.headings) {
+                    level.northAngle = north
+                }
+            }
+
             current = try store.updateLevel(level, in: current, projectID: project.id)
+            if let session {
+                store.importSessionPhotos(session.log, project: project, level: level, context: context)
+            }
             project.updatedAt = Date()
             if project.status == .lead { project.status = .measured }
             try context.save()
             self.snapshot = current
             coordinator.clearAccepted()
-            coordinator.endFlow()
-            finished = true
+
+            // 5. Before leaving the property: anything that looks unscanned?
+            let findings = MissingSpaceDetector.findings(for: level, levels: current.levels)
+            if findings.isEmpty {
+                finished = true
+            } else {
+                reviewLevel = level
+                reviewFindings = findings
+                showReview = true
+            }
         } catch {
             saveError = "Saving the scan failed: \(error.localizedDescription)"
             AppLog.scan.error("Scan save failed: \(error.localizedDescription)")
@@ -555,7 +683,7 @@ struct RoomNameSheet: View {
                 } header: {
                     Text("Room")
                 } footer: {
-                    Text("Leave the name blank and the room labels itself from what the scan finds — a room with a tub becomes Bathroom, one with a bed becomes Bedroom, duplicates are numbered.")
+                    Text("Leave the name blank and the room labels itself from what the scan finds — a room with a tub becomes Bathroom, one with a bed becomes Bedroom, duplicates are numbered. Walk several connected rooms in one go and they are split automatically.")
                 }
                 Section {
                     Button {
