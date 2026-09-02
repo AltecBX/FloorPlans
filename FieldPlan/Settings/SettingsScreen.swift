@@ -80,18 +80,23 @@ struct SettingsScreen: View {
                     TextField("Report footer", text: Binding(
                         get: { settings.reportFooter }, set: { settings.reportFooter = $0 }))
 
+                    // Read the logo once: the property loads it from disk on
+                    // every access, and the picker's label closure cannot
+                    // reach main-actor state, only this plain flag.
+                    let logo = settings.companyLogo
+                    let hasLogo = logo != nil
                     HStack {
-                        if let logo = settings.companyLogo {
+                        if let logo {
                             Image(uiImage: logo)
                                 .resizable()
                                 .scaledToFit()
                                 .frame(height: 44)
                         }
                         PhotosPicker(selection: $logoPickerItem, matching: .images) {
-                            Label(settings.companyLogo == nil ? "Add Logo" : "Change Logo",
+                            Label(hasLogo ? "Change Logo" : "Add Logo",
                                   systemImage: "photo.badge.plus")
                         }
-                        if settings.companyLogo != nil {
+                        if hasLogo {
                             Spacer()
                             Button("Remove", role: .destructive) {
                                 settings.setCompanyLogo(nil)

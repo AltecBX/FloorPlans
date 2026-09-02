@@ -171,7 +171,10 @@ final class ProjectStore: ObservableObject {
         // the migration never runs twice.
         let snapshot = GeometryMigration.migrate(stored)
         if snapshot.schemaVersion != stored.schemaVersion {
-            AppLog.store.info("Migrated snapshot \(snapshot.name, privacy: .public) to geometry schema v\(snapshot.schemaVersion)")
+            // os.Logger has no interpolation for an optional Int, so the
+            // version is unwrapped before it reaches the message.
+            let version = snapshot.schemaVersion ?? GeometryMigration.currentSchemaVersion
+            AppLog.store.info("Migrated snapshot \(snapshot.name, privacy: .public) to geometry schema v\(version)")
             try saveSnapshot(snapshot, projectID: projectID)
         }
         snapshotCache[snapshotID] = snapshot

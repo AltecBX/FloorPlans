@@ -43,8 +43,20 @@ Stage 3 of the CubiCasa benchmark audit: what leaves the phone.
   it so north is up, set north = up as drawn, rename the level.
 - **Report**: Door & Window Schedule and Contractor Quantities pages with
   their toggles.
-- Core suite: 218 tests, all passing on Linux. Every app file parses.
+- Core suite: 219 tests, all passing on Linux. Every app file parses.
   Device checklist items 25–31 in `Docs/DEVICE_TESTING.md`.
+- **Xcode build fixes** (from the owner's build 14 run): the migration log
+  line interpolated an optional `Int` into `os.Logger`, which has no such
+  overload and reported it as an `NSObject?` conversion — the version is
+  unwrapped first now. `SettingsScreen` read the main-actor `companyLogo`
+  from inside the photo picker's label closure; the logo is read once into
+  a local and the closure sees only a `Bool`, which also stops the property
+  re-reading the file from disk three times per redraw.
+- **`AppBoundaryTests`** is a new compile fence: the iOS layer cannot be
+  compiled here, so it mirrors every call `FieldPlan/` makes into
+  `FieldPlanCore` with the same labels and bound types. A wrong label or
+  type at that boundary now fails on Linux instead of on the owner's Mac.
+  Add to it whenever the app starts calling something new.
 
 ## 2026-09-02 — Build 13 (version 1.3): reconstruction (scan engine stage 2)
 
