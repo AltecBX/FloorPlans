@@ -678,6 +678,25 @@ public enum EditorEngine {
         return direction
     }
 
+    // MARK: - Wall thickness
+
+    /// Sets a wall's thickness as typed. The centerline stays where it is,
+    /// the thickness is marked as edited, and the rooms either side are
+    /// rebuilt so their faces move with the new thickness. A wall that was
+    /// never placed as a centerline (`thicknessSource == nil`, the line on the
+    /// captured face) keeps that meaning: only the drawn body changes.
+    public static func setWallThickness(
+        in level: LevelGeometry, wallID: UUID, thickness: Double
+    ) -> LevelGeometry {
+        guard let index = level.walls.firstIndex(where: { $0.id == wallID }) else { return level }
+        var result = level
+        result.walls[index].thickness = max(0.01, thickness)
+        if result.walls[index].thicknessSource != nil {
+            result.walls[index].thicknessSource = .edited
+        }
+        return rebuildRooms(in: result, touchedWallIDs: [wallID])
+    }
+
     // MARK: - Room polygon rebuild
 
     /// Recomputes polygons of rooms whose bounding walls changed, using the

@@ -2,6 +2,50 @@
 
 _Last updated: 2026-09-02_
 
+## 2026-09-02 — Build 14 (version 1.4): presentation, quantities, exports (stage 3)
+
+Stage 3 of the CubiCasa benchmark audit: what leaves the phone.
+
+- **Door styles drawn** (`PlanGenerator`): hinged (leaf + arc), double
+  (two leaves meeting), sliding (two slab panels on their tracks), pocket
+  (panel plus the hidden pocket in the wall), bi-fold (two folding pairs)
+  and garage (panel plus the raised position, hidden). Set per door in the
+  editor's opening inspector (a scan sees a hole, never the leaf); the
+  hinge/swing flips still apply. Rendered and inspected.
+- **Stairs with direction**: treads, walk line, arrowhead at the top and
+  "UP" at the foot; "Up Direction" in the fixture inspector flips which end
+  rises. The 3D primitive steps and the OBJ steps rise the same way.
+- **Cabinet runs** (`FixtureCleanup`, core, tested): RoomPlan "storage" is
+  read from its measured box — wall-hung is an upper cabinet, counter-height
+  and counter-deep is a base cabinet — base cabinets that continue each
+  other become one run, and a run with no wall behind it is an island.
+- **Door & window schedule** (`OpeningSchedule`, core, tested): D1/W1/O1
+  marks per kind, size, sill, rooms either side (served room first), hand
+  (LH/RH from the push side) and swing room for hinged doors, style, status,
+  evidence, "open at scan". CSV export and a report page.
+- **Contractor quantities** (`ContractorQuantities`, `ContractorSummary`,
+  core, tested): per room and for the job — floor, ceiling, paintable wall
+  area (net), wall tile to 7' and wainscot to 4' (openings below the height
+  removed), volume, trim, door/window counts, fixture counts by category,
+  fixtures marked for removal, wet-room flag. Room Detail rows, a Job
+  Quantities section on the Takeoff screen, CSV export, a report page. The
+  takeoff's "all walls" selection now uses the same painted-face area.
+- **Exports**: floor plan and 3D dollhouse as **JPG**; **OBJ + MTL** (zipped)
+  from the canonical geometry — walls with their openings as headers and
+  sills, floor slabs (ear-clipped, so L-shapes are fine), fixtures as boxes
+  and stairs as steps, every level stacked at its scanned height, mode
+  filtering as on the plan (`OBJExporter`, core, tested with index and
+  height checks); door/window and quantities CSVs.
+- **Editor**: door style menu; wall thickness shows *measured / assumed /
+  edited* (typing one marks it edited and rebuilds the rooms either side —
+  `EditorEngine.setWallThickness`); "on scanned face" flags a wall never
+  placed as a centerline; Level menu — rotate the plan 90° either way, turn
+  it so north is up, set north = up as drawn, rename the level.
+- **Report**: Door & Window Schedule and Contractor Quantities pages with
+  their toggles.
+- Core suite: 218 tests, all passing on Linux. Every app file parses.
+  Device checklist items 25–31 in `Docs/DEVICE_TESTING.md`.
+
 ## 2026-09-02 — Build 13 (version 1.3): reconstruction (scan engine stage 2)
 
 Stage 2 of the CubiCasa benchmark audit: the wall model. Design and rules

@@ -240,14 +240,11 @@ public enum TakeoffCalculator {
             roomNames.append(room.name)
 
             let selectedWallArea: Double = {
+                // Every wall: the room's own net wall area, measured along
+                // its painted faces. A subset: those walls' own net areas.
+                if selection.includeAllWalls { return calc.netWallArea }
                 let walls = level.walls(for: room)
-                let chosen: [Wall]
-                if selection.includeAllWalls {
-                    chosen = walls
-                } else {
-                    chosen = walls.filter { selection.wallIDs.contains($0.id) }
-                }
-                return chosen.reduce(0) { $0 + $1.netArea }
+                return walls.filter { selection.wallIDs.contains($0.id) }.reduce(0) { $0 + $1.netArea }
             }()
 
             switch measure {

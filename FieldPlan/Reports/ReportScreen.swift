@@ -22,6 +22,8 @@ struct ReportScreen: View {
                 Toggle("Proposed Plan", isOn: $options.includeProposedPlan)
                 Toggle("Demolition Plan", isOn: $options.includeDemolitionPlan)
                 Toggle("Room Schedule", isOn: $options.includeRoomSchedule)
+                Toggle("Door & Window Schedule", isOn: $options.includeOpeningSchedule)
+                Toggle("Contractor Quantities", isOn: $options.includeQuantities)
                 Toggle("Measurement Schedule", isOn: $options.includeMeasurements)
                 Toggle("Quantity Takeoff", isOn: $options.includeTakeoff)
                 Toggle("Photos", isOn: $options.includePhotos)

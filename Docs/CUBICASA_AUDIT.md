@@ -380,14 +380,28 @@ Stage 2 — reconstruction (brief §7, §10–§14, §16) — **done, build 13**
   remain in stage 3.
 
 Stage 3 — presentation, editing, exports, contractor (brief §10, §11, §18–§20,
-§24)
+§24) — **done, build 14.**
 
-- Door styles drawn (sliding/pocket/bifold/double); stair symbol with
-  direction; confidence shading; lane packing where dimensions collide.
-- Editor: door style, wall thickness source, set north / rotate, rename level.
-- Door and window schedules; JPG; OBJ export; contractor rollups (tile,
-  paintable area, volume, fixture counts).
+- Door styles drawn (hinged, double, sliding, pocket, bi-fold, garage) and
+  set per door in the editor; stair symbol with direction and an "Up
+  Direction" flip; cabinet runs, uppers and islands from the scanned boxes
+  (`FixtureCleanup`); confidence shading (stage 1 toggle) kept.
+- Editor: door style, wall thickness source shown and marked *edited* when
+  typed, rotate plan / turn north up / set north, rename level.
+- Door and window schedule and contractor quantities (paintable area, tile
+  to 7', wainscot to 4', volume, fixture counts) on screen, in CSV and in
+  the report; JPG and OBJ + MTL exports from the canonical geometry.
 - Documentation, build stamp, device checklist for validating each stage.
+
+Still open after stage 3 (in order of value):
+
+- Lane packing where a jogged footprint's chain dimensions collide with
+  each other; dimension text collision with fixtures.
+- Per-wall thickness from the mesh (two planes beside one face) for the
+  single-face partition the room polygons cannot place.
+- Depth-map capture during RoomPlan (needs a second ARSession run).
+- Furniture library pieces for cabinet runs of arbitrary length (today a
+  run is one scaled model).
 
 Everything in stage 1 and 2 that can be expressed without Apple frameworks
 lives in `FieldPlanCore` and is unit-tested on Linux; the app layer is kept to

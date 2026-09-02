@@ -23,8 +23,38 @@ struct TakeoffScreen: View {
         return TakeoffCalculator.lines(for: models, levels: levels)
     }
 
+    private var formatter: UnitFormatter { SettingsStore.shared.formatter }
+
     var body: some View {
         List {
+            // What the whole job measures before any scoping or waste: the
+            // numbers a bid starts from, read from the painted faces.
+            let summary = ContractorSummary.compute(levels: levels)
+            if !summary.rooms.isEmpty {
+                Section {
+                    StatRow(label: "Floor area", value: formatter.area(summary.floorArea))
+                    StatRow(label: "Paintable walls (net)", value: formatter.area(summary.paintableWallArea))
+                    StatRow(label: "Ceilings", value: formatter.area(summary.ceilingArea))
+                    StatRow(label: "Wet-wall tile to 7'", value: formatter.area(summary.wetWallTileArea))
+                    StatRow(label: "Baseboard", value: formatter.linearFeet(summary.baseboardLength))
+                    StatRow(label: "Crown", value: formatter.linearFeet(summary.crownLength))
+                    StatRow(label: "Volume", value: formatter.volume(summary.volume))
+                    StatRow(label: "Doors / Windows", value: "\(summary.doorCount) / \(summary.windowCount)")
+                    if !summary.fixtureSummary.isEmpty {
+                        StatRow(label: "Fixtures", value: summary.fixtureSummary)
+                    }
+                    Button {
+                        exportQuantitiesCSV()
+                    } label: {
+                        Label("Export Quantities CSV (per room)", systemImage: "tablecells")
+                    }
+                } header: {
+                    Text("Job Quantities")
+                } footer: {
+                    Text("Read from the painted faces of every room, net of doors and windows, no waste. Add items below to scope surfaces and apply waste.")
+                }
+            }
+
             if items.isEmpty {
                 ContentUnavailableView(
                     "No Takeoff Items",
@@ -135,6 +165,17 @@ struct TakeoffScreen: View {
         context.insert(record)
         try? context.save()
         editingItem = record
+    }
+
+    private func exportQuantitiesCSV() {
+        let csv = CSVExporter.contractorQuantities(levels: levels, formatter: formatter)
+        let url = ProjectStore.shared.exportsDir(project.id).appendingPathComponent("quantities.csv")
+        do {
+            try csv.data(using: .utf8)?.write(to: url, options: .atomic)
+            csvShare = ShareFile(url: url)
+        } catch {
+            errorMessage = "CSV export failed: \(error.localizedDescription)"
+        }
     }
 
     private func exportCSV() {

@@ -18,7 +18,7 @@ enum AppInfo {
     /// silently failed looks identical to one that worked. Both this and
     /// `CURRENT_PROJECT_VERSION` are bumped on every push.
     static let releaseDate = "September 2, 2026"
-    static let releaseNotes = "Reconstruction: walls are now centerlines with a measured thickness where both sides were walked (assumed and marked otherwise), corners closed, rooms keep their face-to-face size, quantities and dimensions read the painted faces. Two stories in one walk land on their own levels; Align Below in Levels; 3D stacks at scanned heights. Older projects are migrated once on open."
+    static let releaseNotes = "Door styles (sliding, pocket, bi-fold, double, garage) drawn and set per door; stairs show their up direction; cabinet runs and islands from the scan; door & window schedule and contractor quantities (paintable area, tile to 7', volume, fixtures) on screen, in CSV and in the report; JPG and OBJ+MTL exports; rotate/rename a level and set north in the editor. Build 13 brought centerline walls with measured thickness, closed corners, face-to-face room sizes, multi-story scans and migration of older projects."
 
     /// "1.1 (8)" — the string to quote when reporting a problem.
     static var versionAndBuild: String { "\(version) (\(build))" }

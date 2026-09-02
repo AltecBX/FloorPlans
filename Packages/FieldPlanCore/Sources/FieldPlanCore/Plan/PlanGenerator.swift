@@ -417,20 +417,69 @@ public enum PlanGenerator {
             switch o.kind {
             case .door:
                 let swing = o.swing ?? DoorSwing()
-                let hinge = swing.hingeAtStart ? pStart : pEnd
-                let leafDir = swing.hingeAtStart ? dir : -dir
                 let side = swing.opensPositiveSide ? perp : -perp
                 let width = e - s
-                let leafEnd = hinge + side * width
-                let leafPen: PlanPen = o.changeStatus == .demolish && (mode == .demolition || mode == .overlay)
-                    ? .wallDemolished : .doorLeaf
-                emit(.line(a: hinge, b: leafEnd, pen: leafPen))
-                // Swing arc from leaf tip to the opposite jamb.
-                let a0 = (leafEnd - hinge).angle
-                let a1 = (leafDir * width).angle
-                let (startA, endA) = shortestArc(from: a0, to: a1)
-                emit(.arc(center: hinge, radius: width, startAngle: startA, endAngle: endA,
-                          pen: o.changeStatus == .demolish && (mode == .demolition || mode == .overlay) ? .wallDemolished : .doorSwing))
+                let demolished = o.changeStatus == .demolish && (mode == .demolition || mode == .overlay)
+                let leafPen: PlanPen = demolished ? .wallDemolished : .doorLeaf
+                let arcPen: PlanPen = demolished ? .wallDemolished : .doorSwing
+                let hiddenPen: PlanPen = demolished ? .wallDemolished : .openingHead
+
+                // Leaf and swing arc from a hinge point, the way every
+                // hinged door is drawn.
+                func hingedLeaf(at hinge: Vec2, toward leafDir: Vec2, length: Double) {
+                    let leafEnd = hinge + side * length
+                    emit(.line(a: hinge, b: leafEnd, pen: leafPen))
+                    let (startA, endA) = shortestArc(from: (leafEnd - hinge).angle, to: (leafDir * length).angle)
+                    emit(.arc(center: hinge, radius: length, startAngle: startA, endAngle: endA, pen: arcPen))
+                }
+
+                switch o.resolvedStyle {
+                case .hinged:
+                    hingedLeaf(at: swing.hingeAtStart ? pStart : pEnd,
+                               toward: swing.hingeAtStart ? dir : -dir, length: width)
+                case .doubleHinged:
+                    // A leaf on each jamb, meeting in the middle.
+                    hingedLeaf(at: pStart, toward: dir, length: width / 2)
+                    hingedLeaf(at: pEnd, toward: -dir, length: width / 2)
+                case .sliding:
+                    // Two panels on separate tracks, overlapping at the centre,
+                    // each drawn as a thin slab so it reads inside the jambs.
+                    let panel = width * 0.55
+                    let near = perp * (ht * 0.12)
+                    let far = perp * (ht * 0.55)
+                    emit(.polyline(points: [pStart + near, pStart + dir * panel + near,
+                                            pStart + dir * panel + far, pStart + far],
+                                   closed: true, pen: leafPen))
+                    emit(.polyline(points: [pEnd - near, pEnd - dir * panel - near,
+                                            pEnd - dir * panel - far, pEnd - far],
+                                   closed: true, pen: leafPen))
+                    emit(.line(a: pStart, b: pEnd, pen: arcPen))
+                case .pocket:
+                    // One panel showing in the opening; its pocket drawn hidden
+                    // inside the wall beyond the jamb it slides toward.
+                    let jamb = swing.hingeAtStart ? pStart : pEnd
+                    let into = swing.hingeAtStart ? dir : -dir      // into the opening
+                    emit(.line(a: jamb, b: jamb + into * (width * 0.35), pen: leafPen))
+                    emit(.line(a: jamb, b: jamb - into * width, pen: hiddenPen))
+                    emit(.line(a: jamb - into * width + perp * ht * 0.5,
+                               b: jamb - into * width - perp * ht * 0.5, pen: hiddenPen))
+                case .bifold:
+                    // Two folding pairs, one from each jamb, standing on the
+                    // swing side.
+                    let quarter = width / 4
+                    let mid = pStart + dir * (width / 2)
+                    let fold = side * (quarter * 0.9)
+                    emit(.polyline(points: [pStart, pStart + dir * quarter + fold, mid], closed: false, pen: leafPen))
+                    emit(.polyline(points: [pEnd, pEnd - dir * quarter + fold, mid], closed: false, pen: leafPen))
+                case .garage:
+                    // Overhead door: the panel in the opening, its raised
+                    // position hidden inside.
+                    emit(.line(a: pStart, b: pEnd, pen: leafPen))
+                    let inside = side * (ht + min(width * 0.9, 2.2))
+                    emit(.line(a: pStart + side * ht, b: pStart + inside, pen: hiddenPen))
+                    emit(.line(a: pEnd + side * ht, b: pEnd + inside, pen: hiddenPen))
+                    emit(.line(a: pStart + inside, b: pEnd + inside, pen: hiddenPen))
+                }
             case .window:
                 let glazePen: PlanPen = o.changeStatus == .demolish && (mode == .demolition || mode == .overlay)
                     ? .wallDemolished : .windowGlazing
@@ -559,13 +608,24 @@ public enum PlanGenerator {
             emit(.line(a: local(-w / 2, -d * 0.18), b: local(w / 2, -d * 0.18), pen: pen))
             emit(.line(a: local(-w / 2, d * 0.18), b: local(w / 2, d * 0.18), pen: pen))
         case .stairs:
-            // Tread lines across the depth.
+            // Tread lines across the depth, the walk line up the middle with
+            // its arrowhead at the top and "UP" at the foot. The fixture's
+            // front (+y) is the upper end; the editor flips it.
             let treads = max(2, Int(d / 0.28))
             for i in 1..<treads {
                 let y = -d / 2 + d * Double(i) / Double(treads)
                 emit(.line(a: local(-w / 2, y), b: local(w / 2, y), pen: pen))
             }
-            emit(.line(a: local(0, -d / 2), b: local(0, d / 2), pen: pen))
+            let footY = -d / 2 + min(0.3, d * 0.25)
+            let headY = d / 2 - 0.05
+            emit(.circle(center: local(0, footY), radius: 0.035, pen: pen, filled: true))
+            emit(.line(a: local(0, footY), b: local(0, headY), pen: pen))
+            let arrow = min(0.18, w * 0.3)
+            emit(.line(a: local(0, headY), b: local(-arrow * 0.55, headY - arrow), pen: pen))
+            emit(.line(a: local(0, headY), b: local(arrow * 0.55, headY - arrow), pen: pen))
+            let textHeight = min(0.13, w * 0.28)
+            emit(.text(string: "UP", position: local(w * 0.28, footY + textHeight * 0.2),
+                       height: textHeight, rotation: rot, anchor: .center, pen: pen))
         case .column:
             emit(.polygon(points: corners, fill: .wallPoche, outline: pen))
         case .refrigerator:

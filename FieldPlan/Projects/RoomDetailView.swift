@@ -50,6 +50,14 @@ struct RoomDetailView: View {
                     StatRow(label: "Base Molding", value: formatter.linearFeet(calc.baseMoldingLength))
                     StatRow(label: "Crown Molding", value: formatter.linearFeet(calc.crownMoldingLength))
                     StatRow(label: "Doors / Windows", value: "\(calc.doorCount) / \(calc.windowCount)")
+                    let quantities = ContractorQuantities.compute(room: room, in: level)
+                    StatRow(label: "Paintable Walls", value: formatter.area(quantities.paintableWallArea))
+                    StatRow(label: "Wall Tile to 7'", value: formatter.area(quantities.wallTileArea))
+                    StatRow(label: "Wainscot to 4'", value: formatter.area(quantities.wainscotArea))
+                    StatRow(label: "Volume", value: formatter.volume(quantities.volume))
+                    if quantities.fixtureTotal > 0 {
+                        StatRow(label: "Fixtures", value: quantities.fixtureSummary)
+                    }
                     if let evidence = room.evidence {
                         StatRow(label: "Confidence (evidence)", value: evidence.percentText)
                         if let coverage = evidence.coverage {

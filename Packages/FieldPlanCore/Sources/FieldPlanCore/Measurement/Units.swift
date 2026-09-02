@@ -41,6 +41,7 @@ public enum UnitConstants {
     public static let metersPerInch = 0.0254
     public static let metersPerFoot = 0.3048
     public static let squareMetersPerSquareFoot = 0.09290304
+    public static let cubicMetersPerCubicFoot = 0.028316846592
 }
 
 /// Formats lengths and areas for display. Rounding happens HERE only —
@@ -99,6 +100,21 @@ public struct UnitFormatter: Sendable {
             return String(format: "%.1f LF", meters / UnitConstants.metersPerFoot)
         case .meters, .centimeters:
             return String(format: "%.2f m", meters)
+        }
+    }
+
+    // MARK: Volume
+
+    /// Formats a volume in cubic meters, e.g. `1,024 cu ft` (room air volume
+    /// for HVAC sizing, demolition haul-off).
+    public func volume(_ cubicMeters: Double) -> String {
+        guard cubicMeters.isFinite else { return "—" }
+        switch system {
+        case .feetInches, .decimalFeet:
+            let cubicFeet = cubicMeters / UnitConstants.cubicMetersPerCubicFoot
+            return String(format: "%.0f cu ft", cubicFeet)
+        case .meters, .centimeters:
+            return String(format: "%.1f m³", cubicMeters)
         }
     }
 

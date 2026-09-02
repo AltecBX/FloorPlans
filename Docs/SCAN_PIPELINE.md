@@ -218,6 +218,47 @@ level has one.
 staircase over the one below, or its footprint centre when there is no
 stair.
 
+## Presentation, quantities and exports (stage 3)
+
+Everything below reads the canonical model; nothing re-measures.
+
+- **Door styles** (`WallOpening.style`, `resolvedStyle`): hinged is the
+  default because a scan sees a hole, never a leaf. The plan draws each
+  style its own way (leaf and arc; two leaves; two slab panels on their
+  tracks; a panel with its hidden pocket; folding pairs; an overhead panel
+  with its raised position hidden). The swing record still decides hinge
+  side and direction, and for a pocket door which jamb it slides into.
+- **Stairs**: the fixture's local +y is the upper end. The plan draws
+  treads, the walk line, an arrowhead at the top and "UP" at the foot; the
+  3D primitive and the OBJ steps rise the same way; the editor flips it.
+- **Cabinets** (`FixtureCleanup`): a scanned "storage" box with its bottom
+  ≥ 0.9 m up and ≤ 1.3 m tall is an upper cabinet; one on the floor,
+  0.75–1.05 m tall and 0.40–0.80 m deep, at least 0.45 m long, is a base
+  cabinet. Base cabinets that continue each other (same axis within 6°,
+  within 12 cm laterally and 12 cm end to end, depths within 15 cm) become
+  one run; a run more than half its depth plus 25 cm from every wall is an
+  island. Hand-placed fixtures are never touched.
+- **Schedules** (`OpeningSchedule`): doors, then windows, then cased
+  openings, numbered per kind across the levels in story order; rooms
+  either side from a probe 30 cm past each face; for swinging doors the
+  served room and the hand, read from the push side (the side the leaf
+  swings away from): hinges on the viewer's left is LH.
+- **Contractor quantities** (`ContractorQuantities`, `ContractorSummary`):
+  paintable wall area = the room's net wall area along its polygon edges;
+  tile and wainscot areas take each face's length × min(limit, wall height)
+  less the part of every opening below the limit; volume = floor area ×
+  ceiling height; fixture counts by category, with demolished ones apart;
+  wet rooms are bathrooms, powder rooms, kitchens and laundries. The takeoff
+  uses the same net area when every wall of a room is selected.
+- **OBJ** (`OBJExporter`): metres, Y up, plan +y → −z. Walls are boxes
+  between openings with headers and sills, exactly as the 3D viewer builds
+  them; floors are slabs whose top and bottom are ear-clipped
+  (`GeometryOps.triangulate`); fixtures are boxes at typical heights and
+  offsets (uppers, hoods and mirrors hang); stairs are steps. Levels stack at
+  their scanned heights when every level has one, else by story. Mode
+  filtering is the plan's (`PlanGenerator.includeElement`). The MTL carries
+  flat colours; both files ship zipped.
+
 ## Snapshot files and migration
 
 - `PlanSnapshot.schemaVersion` (nil = 1, current = 2). Version 2 means

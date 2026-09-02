@@ -182,6 +182,59 @@ public enum GeometryOps {
         return best
     }
 
+    /// Strictly inside triangle abc (points on an edge count as outside, so
+    /// a collinear neighbour never blocks an ear).
+    public static func pointInTriangle(_ p: Vec2, _ a: Vec2, _ b: Vec2, _ c: Vec2) -> Bool {
+        let d1 = (b - a).cross(p - a)
+        let d2 = (c - b).cross(p - b)
+        let d3 = (a - c).cross(p - c)
+        let eps = 1e-12
+        let allPositive = d1 > eps && d2 > eps && d3 > eps
+        let allNegative = d1 < -eps && d2 < -eps && d3 < -eps
+        return allPositive || allNegative
+    }
+
+    /// Ear-clipping triangulation of a simple polygon (either winding).
+    /// Returns index triples into `polygon`, counter-clockwise. A polygon the
+    /// clipper cannot resolve (self-intersecting) falls back to a fan so a
+    /// caller always gets something to draw.
+    public static func triangulate(_ polygon: [Vec2]) -> [(Int, Int, Int)] {
+        guard polygon.count >= 3 else { return [] }
+        var indices = Array(0..<polygon.count)
+        if signedArea(polygon) < 0 { indices.reverse() }
+        var result: [(Int, Int, Int)] = []
+        var attempts = 0
+        while indices.count > 3 && attempts < polygon.count * polygon.count + 10 {
+            attempts += 1
+            var clipped = false
+            for i in 0..<indices.count {
+                let i0 = indices[(i + indices.count - 1) % indices.count]
+                let i1 = indices[i]
+                let i2 = indices[(i + 1) % indices.count]
+                let a = polygon[i0], b = polygon[i1], c = polygon[i2]
+                guard (b - a).cross(c - b) > 1e-12 else { continue }   // reflex or flat corner
+                var blocked = false
+                for j in indices where j != i0 && j != i1 && j != i2 {
+                    if pointInTriangle(polygon[j], a, b, c) { blocked = true; break }
+                }
+                if blocked { continue }
+                result.append((i0, i1, i2))
+                indices.remove(at: i)
+                clipped = true
+                break
+            }
+            if !clipped { break }
+        }
+        if indices.count == 3 {
+            result.append((indices[0], indices[1], indices[2]))
+        } else if indices.count > 3 {
+            for k in 1..<(indices.count - 1) {
+                result.append((indices[0], indices[k], indices[k + 1]))
+            }
+        }
+        return result
+    }
+
     /// Distance from a point to the nearest polygon edge.
     public static func distanceToPolygonBoundary(_ polygon: [Vec2], _ p: Vec2) -> Double {
         guard polygon.count >= 2 else { return .greatestFiniteMagnitude }

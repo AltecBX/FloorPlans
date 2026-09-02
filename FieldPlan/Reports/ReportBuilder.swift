@@ -10,6 +10,10 @@ struct ReportOptions {
     var includeProposedPlan = true
     var includeDemolitionPlan = false
     var includeRoomSchedule = true
+    /// Door and window schedule: mark, size, hand, rooms served.
+    var includeOpeningSchedule = true
+    /// Contractor quantities: paintable area, tile area, volume, fixtures.
+    var includeQuantities = true
     var includeMeasurements = true
     var includeTakeoff = true
     var includePhotos = true
@@ -400,6 +404,78 @@ enum ReportBuilder {
                     headers: ["Level", "Room", "Floor", "Perimeter", "CLG HT", "Net Wall", "Dr/Wn"],
                     widths: [70, 110, 70, 78, 62, 78, 48],
                     rows: rows)
+            }
+
+            // ---- Door and window schedule ----
+            let openingRows = options.includeOpeningSchedule ? OpeningSchedule.rows(levels: snapshot.levels) : []
+            if !openingRows.isEmpty {
+                composer.newPage()
+                composer.heading("Door & Window Schedule")
+                let rows = openingRows.map { r -> [String] in
+                    var typeText = r.kind.displayName
+                    if let style = r.style, style != .hinged { typeText = style.displayName }
+                    var swing = r.hand ?? ""
+                    if let into = r.swingsInto { swing += (swing.isEmpty ? "" : " → ") + into }
+                    return [
+                        r.mark,
+                        r.levelName,
+                        r.rooms.joined(separator: " / "),
+                        typeText,
+                        "\(formatter.length(r.width)) × \(formatter.length(r.height))",
+                        r.kind == .window ? formatter.length(r.sillHeight) : "—",
+                        swing.isEmpty ? "—" : swing,
+                        [r.changeStatus == .existing ? "" : r.changeStatus.displayName, r.notes]
+                            .filter { !$0.isEmpty }.joined(separator: "; "),
+                    ]
+                }
+                composer.table(
+                    headers: ["Mark", "Level", "Rooms", "Type", "W × H", "Sill", "Hand / Swing", "Notes"],
+                    widths: [34, 62, 110, 54, 82, 46, 74, 54],
+                    rows: rows)
+                composer.text(
+                    "Hand is read from the push side (the side the door swings away from): hinges on the left is LH. Sizes are the rough opening as scanned or edited.",
+                    font: Fonts.small, color: .gray)
+            }
+
+            // ---- Contractor quantities ----
+            if options.includeQuantities {
+                let summary = ContractorSummary.compute(levels: snapshot.levels)
+                if !summary.rooms.isEmpty {
+                    composer.newPage()
+                    composer.heading("Contractor Quantities")
+                    let rows = summary.rooms.map { q -> [String] in
+                        [
+                            q.levelName,
+                            q.roomName,
+                            formatter.area(q.floorArea),
+                            formatter.area(q.paintableWallArea),
+                            formatter.area(q.ceilingArea),
+                            q.isWetRoom ? formatter.area(q.wallTileArea) : "—",
+                            formatter.volume(q.volume),
+                            q.fixtureTotal == 0 ? "—" : String(q.fixtureTotal),
+                        ]
+                    }
+                    composer.table(
+                        headers: ["Level", "Room", "Floor", "Paint Walls", "Ceiling", "Tile to 7'", "Volume", "Fixt."],
+                        widths: [58, 96, 62, 66, 62, 60, 60, 52],
+                        rows: rows)
+                    let totals = [
+                        "Floor \(formatter.area(summary.floorArea))",
+                        "paintable walls \(formatter.area(summary.paintableWallArea))",
+                        "ceilings \(formatter.area(summary.ceilingArea))",
+                        "wet-wall tile \(formatter.area(summary.wetWallTileArea))",
+                        "baseboard \(formatter.linearFeet(summary.baseboardLength))",
+                        "volume \(formatter.volume(summary.volume))",
+                        "\(summary.doorCount) doors, \(summary.windowCount) windows",
+                    ]
+                    composer.text("Totals: " + totals.joined(separator: " · ") + ".", font: Fonts.body, color: .black)
+                    if !summary.fixtureSummary.isEmpty {
+                        composer.text("Fixtures: \(summary.fixtureSummary).", font: Fonts.body, color: .black)
+                    }
+                    composer.text(
+                        "Wall areas are the painted faces, net of doors and windows. Tile is wet rooms only, floor to 7'-0\". Volume is floor area × ceiling height. Waste is not included — see the takeoff.",
+                        font: Fonts.small, color: .gray)
+                }
             }
 
             // ---- Measurement schedule ----

@@ -227,7 +227,9 @@ enum FurnitureModels {
             for index in 0..<treads {
                 add(width, rise, run,
                     y: rise * (Double(index) + 0.5),
-                    z: -depth / 2 + run * (Double(index) + 0.5),
+                    // Rising toward the fixture's front (plan +y, scene -z),
+                    // where the plan symbol's arrow and the OBJ steps go.
+                    z: depth / 2 - run * (Double(index) + 0.5),
                     color: Palette.wood, chamfer: 0.005)
             }
 

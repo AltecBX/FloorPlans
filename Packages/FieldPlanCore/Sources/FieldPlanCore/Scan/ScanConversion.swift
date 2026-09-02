@@ -590,13 +590,19 @@ public enum ScanConversion {
             result.rooms.append(room)
             result.walls.append(contentsOf: roomWalls)
 
-            // Objects → fixtures.
+            // Objects → fixtures. "Storage" is read from its measured box:
+            // counter-height and counter-deep is a base cabinet, wall-hung
+            // is an upper, anything else stays storage. `floorY` is the
+            // room's floor height found above.
             for object in scanned.objects {
                 let axisPlan = planDirection(object.xAxis)
                 let rotation = axisPlan.length > 0.5 ? axisPlan.angle : 0
+                let category = object.categoryName.lowercased() == "storage"
+                    ? FixtureCleanup.storageCategory(object, floorY: floorY)
+                    : fixtureCategory(forObjectNamed: object.categoryName)
                 let fixture = FixtureItem(
                     id: object.id,
-                    category: fixtureCategory(forObjectNamed: object.categoryName),
+                    category: category,
                     label: nil,
                     center: object.center.planProjection,
                     size: Vec2(max(object.dimensions.x, 0.05), max(object.dimensions.z, 0.05)),
@@ -648,6 +654,10 @@ public enum ScanConversion {
         // wall graph so each is typed and named on its own fixtures and the
         // scanner's section labels.
         result = splitIntoRooms(result, hints: conversion.sectionHints)
+
+        // Base cabinets that continue each other become one run; a run with
+        // no wall behind it is an island.
+        result.fixtures = FixtureCleanup.mergeCabinetRuns(result.fixtures, walls: result.walls)
 
         // Auto-name rooms captured without a user-entered name, numbering
         // duplicates per level: Bedroom, Bedroom 2, Bathroom, …

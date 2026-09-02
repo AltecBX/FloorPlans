@@ -52,6 +52,8 @@ struct PlanEditorScreen: View {
     // UI state
     @State private var errorMessage: String? = nil
     @State private var showQA = false
+    @State private var showRename = false
+    @State private var renameText = ""
     @State private var noteDraft = ""
     @State private var notePosition: Vec2? = nil
     @State private var fixturePlacement: PositionBox? = nil
@@ -99,6 +101,21 @@ struct PlanEditorScreen: View {
             if let level {
                 QAFindingsSheet(level: level)
             }
+        }
+        .alert("Rename Level", isPresented: $showRename) {
+            TextField("Level name", text: $renameText)
+            Button("Rename") {
+                let name = renameText.trimmingCharacters(in: .whitespaces)
+                guard !name.isEmpty else { return }
+                commit { lvl in
+                    var updated = lvl
+                    updated.name = name
+                    return updated
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The name shows on every plan, schedule and report.")
         }
         .sheet(item: $fixturePlacement) { box in
             FixturePickerSheet(position: box.position) { fixture in
@@ -158,6 +175,45 @@ struct PlanEditorScreen: View {
                     showQA = true
                 } label: {
                     Label("Run QA Checks", systemImage: "checkmark.shield")
+                }
+                Divider()
+                // Whole-level moves: every wall, room, fixture and note turns
+                // together and north turns with them.
+                Menu {
+                    Button {
+                        rotateLevel(by: -.pi / 2)
+                    } label: {
+                        Label("Rotate Plan 90° Clockwise", systemImage: "rotate.right")
+                    }
+                    Button {
+                        rotateLevel(by: .pi / 2)
+                    } label: {
+                        Label("Rotate Plan 90° Counter-clockwise", systemImage: "rotate.left")
+                    }
+                    if let north = level?.northAngle, abs(north) > 0.01 {
+                        Button {
+                            rotateLevel(by: -north)
+                        } label: {
+                            Label("Turn Plan So North Is Up", systemImage: "location.north.line")
+                        }
+                    }
+                    Button {
+                        commit { lvl in
+                            var updated = lvl
+                            updated.northAngle = 0
+                            return updated
+                        }
+                    } label: {
+                        Label("Set North = Up (as drawn)", systemImage: "location.north")
+                    }
+                    Button {
+                        renameText = level?.name ?? ""
+                        showRename = true
+                    } label: {
+                        Label("Rename Level…", systemImage: "pencil")
+                    }
+                } label: {
+                    Label("Level: \(level?.name ?? "")", systemImage: "square.stack.3d.up")
                 }
             } label: {
                 Image(systemName: "slider.horizontal.3")
@@ -224,13 +280,7 @@ struct PlanEditorScreen: View {
                             }
                         },
                         onSetThickness: { thickness in
-                            commit { lvl in
-                                var updated = lvl
-                                if let i = updated.walls.firstIndex(where: { $0.id == id }) {
-                                    updated.walls[i].thickness = thickness
-                                }
-                                return updated
-                            }
+                            commit { EditorEngine.setWallThickness(in: $0, wallID: id, thickness: thickness) }
                         },
                         onStatus: { status in
                             commit { EditorEngine.setWallChangeStatus(in: $0, wallID: id, status: status) }
@@ -602,6 +652,16 @@ struct PlanEditorScreen: View {
         commitAbsolute(updated)
     }
 
+    /// Turns the whole level about the centre of its footprint (radians,
+    /// counter-clockwise); north follows.
+    private func rotateLevel(by angle: Double) {
+        guard let current = level else { return }
+        let bounds = current.bounds
+        let pivot = bounds.isNull ? Vec2.zero : bounds.center
+        commitAbsolute(LevelRegistration.rotated(current, by: angle, about: pivot))
+        selection = .none
+    }
+
     private func commitAbsolute(_ updated: LevelGeometry) {
         level = updated
         pushHistory(updated)
@@ -690,6 +750,15 @@ private struct WallInspector: View {
                     HStack(spacing: 8) {
                         Text("H \(formatter.length(wall.height))")
                         Text("T \(formatter.length(wall.thickness))")
+                        if let thicknessSource = wall.thicknessSource {
+                            // Measured between two scanned faces, assumed from
+                            // one, or typed here — never silently the same.
+                            Text(thicknessSource.displayName.lowercased())
+                                .foregroundStyle(thicknessSource == .assumed ? .orange : .secondary)
+                        } else if wall.source == .lidarScanned {
+                            Text("on scanned face")
+                                .foregroundStyle(.orange)
+                        }
                         if let original = wall.originalLength {
                             Text("was \(formatter.length(original))")
                                 .foregroundStyle(.orange)
@@ -843,7 +912,7 @@ private struct OpeningInspector: View {
                         Image(systemName: "arrow.left.arrow.right")
                     }
                     .buttonStyle(.bordered)
-                    .accessibilityLabel("Flip hinge side")
+                    .accessibilityLabel(opening.resolvedStyle == .pocket ? "Flip pocket side" : "Flip hinge side")
                     Button {
                         var updated = opening
                         updated.swing = resolvedSwing.reversed
@@ -853,6 +922,30 @@ private struct OpeningInspector: View {
                     }
                     .buttonStyle(.bordered)
                     .accessibilityLabel("Flip swing direction")
+                    // A scan sees a hole, never the leaf: anything but hinged
+                    // is set here.
+                    Menu {
+                        ForEach(DoorStyle.allCases, id: \.self) { style in
+                            Button {
+                                var updated = opening
+                                updated.style = style
+                                updated.source = .edited
+                                onUpdate(updated)
+                            } label: {
+                                if style == opening.resolvedStyle {
+                                    Label(style.displayName, systemImage: "checkmark")
+                                } else {
+                                    Text(style.displayName)
+                                }
+                            }
+                        }
+                    } label: {
+                        Text(opening.resolvedStyle.displayName)
+                            .font(.caption.weight(.medium))
+                            .padding(.horizontal, 4)
+                    }
+                    .buttonStyle(.bordered)
+                    .accessibilityLabel("Door style")
                 }
                 Spacer()
                 Button(role: .destructive, action: onDelete) {
@@ -948,6 +1041,19 @@ private struct FixtureInspector: View {
                 }
                 .buttonStyle(.bordered)
                 .accessibilityLabel("Rotate minus 15 degrees")
+                if fixture.category == .stairs {
+                    // The plan arrow and the 3D steps rise toward the
+                    // fixture's front; a scan cannot tell which end is up.
+                    Button {
+                        var updated = fixture
+                        updated.rotation += .pi
+                        onUpdate(updated)
+                    } label: {
+                        Label("Up Direction", systemImage: "arrow.up.arrow.down")
+                    }
+                    .buttonStyle(.bordered)
+                    .accessibilityLabel("Flip which end of the stairs goes up")
+                }
                 Spacer()
                 Button(role: .destructive, action: onDelete) {
                     Image(systemName: "trash")

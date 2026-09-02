@@ -81,6 +81,100 @@ public enum CSVExporter {
         return out
     }
 
+    // MARK: - Door and window schedule
+
+    public static func openingSchedule(
+        levels: [LevelGeometry],
+        formatter: UnitFormatter = UnitFormatter()
+    ) -> String {
+        var out = row([
+            "Mark", "Level", "Kind", "Style", "Width", "Height", "Sill",
+            "Rooms", "Hand", "Swings Into", "Wall Thickness", "Status", "Source", "Evidence", "Notes",
+        ])
+        for r in OpeningSchedule.rows(levels: levels) {
+            out += row([
+                r.mark,
+                r.levelName,
+                r.kind.displayName,
+                r.style?.displayName ?? "",
+                formatter.length(r.width),
+                formatter.length(r.height),
+                r.kind == .window ? formatter.length(r.sillHeight) : "",
+                r.rooms.joined(separator: " / "),
+                r.hand ?? "",
+                r.swingsInto ?? "",
+                formatter.length(r.wallThickness),
+                r.changeStatus.displayName,
+                r.source.displayName,
+                r.evidencePercent.map { "\($0)%" } ?? "",
+                r.notes,
+            ])
+        }
+        return out
+    }
+
+    // MARK: - Contractor quantities
+
+    public static func contractorQuantities(
+        levels: [LevelGeometry],
+        formatter: UnitFormatter = UnitFormatter()
+    ) -> String {
+        var out = row([
+            "Level", "Room", "Type", "Floor Area", "Ceiling Area", "Ceiling Height",
+            "Paintable Wall Area", "Wall Tile Area (to 7')", "Wainscot Area (to 4')", "Volume",
+            "Perimeter", "Baseboard", "Crown", "Doors", "Windows", "Openings",
+            "Fixtures", "Fixtures Removed", "Wet Room",
+        ])
+        let summary = ContractorSummary.compute(levels: levels)
+        for q in summary.rooms {
+            let removed = FixtureCategory.allCases.compactMap { category -> String? in
+                guard let n = q.demolishedFixtureCounts[category.rawValue], n > 0 else { return nil }
+                return "\(n) \(category.displayName.lowercased())"
+            }.joined(separator: ", ")
+            out += row([
+                q.levelName,
+                q.roomName,
+                q.roomType.displayName,
+                formatter.area(q.floorArea),
+                formatter.area(q.ceilingArea),
+                q.ceilingHeight.map { formatter.length($0) } ?? "",
+                formatter.area(q.paintableWallArea),
+                formatter.area(q.wallTileArea),
+                formatter.area(q.wainscotArea),
+                formatter.volume(q.volume),
+                formatter.linearFeet(q.perimeter),
+                formatter.linearFeet(q.baseboardLength),
+                formatter.linearFeet(q.crownLength),
+                String(q.doorCount),
+                String(q.windowCount),
+                String(q.openingCount),
+                q.fixtureSummary,
+                removed,
+                q.isWetRoom ? "YES" : "",
+            ])
+        }
+        out += row([
+            "TOTAL", "", "",
+            formatter.area(summary.floorArea),
+            formatter.area(summary.ceilingArea),
+            "",
+            formatter.area(summary.paintableWallArea),
+            formatter.area(summary.wetWallTileArea),
+            formatter.area(summary.wainscotArea),
+            formatter.volume(summary.volume),
+            "",
+            formatter.linearFeet(summary.baseboardLength),
+            formatter.linearFeet(summary.crownLength),
+            String(summary.doorCount),
+            String(summary.windowCount),
+            "",
+            summary.fixtureSummary,
+            "",
+            "",
+        ])
+        return out
+    }
+
     // MARK: - Takeoff schedule
 
     public static func takeoffSchedule(_ lines: [TakeoffLine]) -> String {

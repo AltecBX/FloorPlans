@@ -99,8 +99,11 @@ angled walls are never distorted (§17).
 
 `PlanGenerator` emits semantic vector primitives (`PlanPrimitive` with
 `PlanPen`s). Renderers map pens per medium: SwiftUI `Canvas` (interactive,
-dark-mode aware), `CGContext` (PDF/PNG, print style), SVG (classes/colors),
-DXF (layers). One geometry source; identical output everywhere.
+dark-mode aware), `CGContext` (PDF/PNG/JPG, print style), SVG (classes/colors),
+DXF (layers). One geometry source; identical output everywhere. The 3D
+viewer, the 3D snapshot and `OBJExporter` build from the same walls, rooms
+and fixtures, and `OpeningSchedule` / `ContractorQuantities` read them for
+the schedules and the numbers a bid is written from.
 
 ## Persistence & migration
 

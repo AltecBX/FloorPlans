@@ -48,13 +48,25 @@ struct ExportScreen: View {
                 Toggle("Title block (address + your company)", isOn: $includeTitleBlock)
 
                 exportButton("Floor Plan PNG", icon: "photo") { try exportPNG() }
+                exportButton("Floor Plan JPG", icon: "photo.on.rectangle") { try exportJPG() }
                 exportButton("3D Dollhouse PNG", icon: "cube.fill") { try export3DPNG() }
+                exportButton("3D Dollhouse JPG", icon: "cube") { try export3DJPG() }
                 exportButton("Floor Plan SVG (vector)", icon: "square.on.circle") { try exportSVG() }
                 exportButton("DXF for CAD", icon: "square.grid.3x3.square") { try exportDXF() }
             }
 
+            Section {
+                exportButton("3D Model OBJ + MTL (zip)", icon: "cube.transparent") { try exportOBJ() }
+            } header: {
+                Text("3D Model")
+            } footer: {
+                Text("Walls with their openings, floor slabs and fixtures from the plan geometry, in metres with Y up — opens in SketchUp, Blender, Rhino and most estimating tools. All levels are included, stacked at their scanned heights.")
+            }
+
             Section("Data Exports") {
                 exportButton("Room Schedule CSV", icon: "tablecells") { try exportRoomCSV() }
+                exportButton("Door & Window Schedule CSV", icon: "door.left.hand.open") { try exportOpeningCSV() }
+                exportButton("Contractor Quantities CSV", icon: "sum") { try exportQuantitiesCSV() }
                 exportButton("Measurements CSV", icon: "ruler") { try exportMeasurementsCSV() }
                 exportButton("Project JSON", icon: "curlybraces") { try exportJSON() }
             }
@@ -210,6 +222,66 @@ struct ExportScreen: View {
         }
         let url = fileURL("\(level.name) 3D.png")
         try data.write(to: url, options: .atomic)
+        return url
+    }
+
+    private func exportJPG() throws -> URL {
+        let level = try requireLevel()
+        let scene = PlanGenerator.scene(for: level, options: planOptions(for: level))
+        let image = PlanImageRenderer.image(for: scene)
+        guard let data = image.jpegData(compressionQuality: 0.92) else {
+            throw ProjectStore.StoreError.importUnreadable("JPG encoding failed.")
+        }
+        let url = fileURL("\(level.name) \(mode.displayName).jpg")
+        try data.write(to: url, options: .atomic)
+        return url
+    }
+
+    private func export3DJPG() throws -> URL {
+        let level = try requireLevel()
+        let renderMode: PlanRenderMode = mode == .demolition ? .existing : mode
+        guard let image = ThreeDSnapshot.render(levels: [level], mode: renderMode, showFurniture: includeFurniture || includeFixtures),
+              let data = image.jpegData(compressionQuality: 0.9) else {
+            throw ProjectStore.StoreError.importUnreadable("3D rendering is unavailable on this device.")
+        }
+        let url = fileURL("\(level.name) 3D.jpg")
+        try data.write(to: url, options: .atomic)
+        return url
+    }
+
+    /// OBJ + MTL from the canonical geometry, zipped so the pair travels
+    /// together through the share sheet.
+    private func exportOBJ() throws -> URL {
+        guard let snapshot, snapshot.levels.contains(where: { !$0.walls.isEmpty || !$0.rooms.isEmpty }) else {
+            throw ProjectStore.StoreError.importUnreadable("No plan geometry to export yet — scan or draw rooms first.")
+        }
+        var options = OBJExporter.Options()
+        options.mode = mode == .demolition ? .existing : mode
+        options.includeFixtures = includeFixtures
+        options.includeFurniture = includeFurniture
+        options.materialFileName = "fieldplan.mtl"
+        let output = OBJExporter.export(levels: snapshot.levels, options: options)
+        let url = fileURL("\(project.name) model.zip")
+        try ZipArchive.write(entries: [
+            ZipEntry(path: "\(project.name).obj", data: Data(output.obj.utf8)),
+            ZipEntry(path: "fieldplan.mtl", data: Data(output.mtl.utf8)),
+        ], to: url)
+        return url
+    }
+
+    private func exportOpeningCSV() throws -> URL {
+        guard let snapshot else { throw ProjectStore.StoreError.importUnreadable("No plan data.") }
+        let csv = CSVExporter.openingSchedule(levels: snapshot.levels, formatter: SettingsStore.shared.formatter)
+        let url = fileURL("doors-windows.csv")
+        try Data(csv.utf8).write(to: url, options: .atomic)
+        return url
+    }
+
+    private func exportQuantitiesCSV() throws -> URL {
+        guard let snapshot else { throw ProjectStore.StoreError.importUnreadable("No plan data.") }
+        let csv = CSVExporter.contractorQuantities(levels: snapshot.levels, formatter: SettingsStore.shared.formatter)
+        let url = fileURL("quantities.csv")
+        try Data(csv.utf8).write(to: url, options: .atomic)
         return url
     }
 

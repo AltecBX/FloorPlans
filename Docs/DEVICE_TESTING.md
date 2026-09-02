@@ -97,6 +97,33 @@ PDF report, and every export (PNG/SVG/DXF/CSV/JSON/.fieldplan).
 24. **Manual room**: draw a room by dimensions; its label reads the typed
     clear size and the walls sit outside it.
 
+## Presentation and exports (build 14) — verify on the property
+
+25. **Door styles**: in the editor tap a door → the style button (says
+    "Hinged") → Sliding. The plan shows two panels; the schedule says
+    "sliding" with no hand. Pocket and bi-fold likewise; the hinge/swing
+    flips still move the pocket side and the fold side.
+26. **Stairs**: scan a room with a staircase. The plan shows treads with an
+    arrow and "UP"; if the arrow points at the bottom step, tap the stairs →
+    "Up Direction". The 3D view's steps rise the same way.
+27. **Cabinets**: scan a kitchen. Base cabinets arrive as runs (one outline
+    per run, not one box per cabinet); uppers are drawn as upper cabinets;
+    an island reads as an island in 3D and in Room Detail's fixture list.
+    Report any run that joined across a gap or a corner.
+28. **Schedule**: Export → Door & Window Schedule CSV. Marks count D1…, W1…;
+    each door names the room it swings into and its hand — check three doors
+    against the house from the push side (hinges on your left = LH).
+29. **Quantities**: Room Detail shows Paintable Walls, Wall Tile to 7',
+    Wainscot to 4', Volume and Fixtures; Takeoff → Job Quantities totals
+    them. For one bathroom check paintable walls against tape: perimeter ×
+    height minus the door and window.
+30. **OBJ**: Export → 3D Model OBJ + MTL, AirDrop the zip to a Mac and open
+    the .obj in Preview or Blender: walls with door and window holes, floors,
+    fixtures, stairs as steps, both levels stacked if two were scanned.
+31. **Level menu**: editor options → Level → Rotate 90°; everything turns
+    together and the north arrow follows. Rename Level shows the new name on
+    the plan, the schedules and the report.
+
 ## Known limitations to verify/accept
 
 - Rooms scanned in *separate* sessions do not share a coordinate space; they
