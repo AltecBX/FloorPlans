@@ -46,6 +46,24 @@ Highlights inspired by professional scanning workflows:
 3. Build & run on your **LiDAR iPhone** (iPhone 12 Pro or newer Pro/Pro Max,
    or any iPhone with LiDAR). Deployment target is iOS 17.0.
 
+Steps 2 and 3 are once per machine *only if the settings are committed*.
+Both live in files git tracks, so committing them means a fresh clone builds
+straight away:
+
+```sh
+# The signing team Xcode just wrote into the project — commit it once.
+grep DEVELOPMENT_TEAM JerryFieldPlans.xcodeproj/project.pbxproj
+git commit -am "Set the signing team"
+
+# The app icon: one 1024×1024 PNG, installed and wired into the catalog.
+Scripts/set-app-icon.sh ~/Downloads/jerry-icon.png
+git add FieldPlan/Assets.xcassets/AppIcon.appiconset
+git commit -m "Add the app icon"
+```
+
+Without that commit the icon slot is empty in every new copy of the
+repository, which is why a hand-dragged icon keeps disappearing.
+
 The simulator runs everything except live scanning (RoomPlan requires real
 LiDAR hardware); use **Settings → Load SAMPLE Project** to exercise plans,
 editing, takeoff, reports and exports without a device or a property.
