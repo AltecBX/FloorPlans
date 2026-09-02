@@ -46,23 +46,22 @@ Highlights inspired by professional scanning workflows:
 3. Build & run on your **LiDAR iPhone** (iPhone 12 Pro or newer Pro/Pro Max,
    or any iPhone with LiDAR). Deployment target is iOS 17.0.
 
-Steps 2 and 3 are once per machine *only if the settings are committed*.
-Both live in files git tracks, so committing them means a fresh clone builds
-straight away:
+The signing team (`MBHTP4GTW3`) is already committed, so step 2 should
+already be filled in.
 
-```sh
-# The signing team Xcode just wrote into the project — commit it once.
-grep DEVELOPMENT_TEAM JerryFieldPlans.xcodeproj/project.pbxproj
-git commit -am "Set the signing team"
+### Changing the app icon
 
-# The app icon: one 1024×1024 PNG, installed and wired into the catalog.
-Scripts/set-app-icon.sh ~/Downloads/jerry-icon.png
-git add FieldPlan/Assets.xcassets/AppIcon.appiconset
-git commit -m "Add the app icon"
-```
+Double-click **`Scripts/Set-App-Icon.command`** in Finder, pick a square PNG,
+and it installs the icon and — if this folder came from `git clone` — saves
+and uploads it. Nothing to type.
 
-Without that commit the icon slot is empty in every new copy of the
-repository, which is why a hand-dragged icon keeps disappearing.
+If the project was **downloaded as a ZIP** rather than cloned, nothing can be
+saved back to GitHub from it, so an icon added by hand disappears with the
+next download. Either clone the repository once, or upload the picture named
+exactly `AppIcon.png` straight into
+`FieldPlan/Assets.xcassets/AppIcon.appiconset/` on github.com. The catalog
+currently holds a plain blue placeholder so the project always builds; the
+uploaded file replaces it.
 
 The simulator runs everything except live scanning (RoomPlan requires real
 LiDAR hardware); use **Settings → Load SAMPLE Project** to exercise plans,
