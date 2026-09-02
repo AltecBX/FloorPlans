@@ -65,7 +65,11 @@ struct ThreeDViewerScreen: View {
                     Divider()
                     let usdzScans = project.scans.filter { $0.usdzFileName != nil }
                     if !usdzScans.isEmpty {
-                        Menu("Raw Scan (USDZ)") {
+                        // Apple's own export of the capture, opened in
+                        // QuickLook. It is a plain white massing model with no
+                        // colours or furniture — kept as the untouched record
+                        // of the scan, not as something to show a client.
+                        Menu("Raw Scan File — Plain White") {
                             ForEach(usdzScans) { scan in
                                 Button(scan.roomName) {
                                     if let name = scan.usdzFileName {

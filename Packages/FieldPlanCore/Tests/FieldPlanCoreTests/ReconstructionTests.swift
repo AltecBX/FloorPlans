@@ -514,6 +514,7 @@ final class DimensionTests: XCTestCase {
         }
         var options = PlanGenerator.Options()
         options.showDimensions = true
+        options.showRoomDimensions = false   // chains instead of a label size
         let labels = texts(in: PlanGenerator.scene(for: level, options: options))
         // The room's 12' × 10' is on its label; outside, the overall width
         // and depth are outside-face to outside-face — 13' 0" and 11' 0",
@@ -538,6 +539,7 @@ final class DimensionTests: XCTestCase {
         let level = LevelGeometry(name: "L", walls: walls, rooms: [room])
         var options = PlanGenerator.Options()
         options.showDimensions = true
+        options.showRoomDimensions = false   // chains instead of a label size
         let labels = texts(in: PlanGenerator.scene(for: level, options: options))
         // Inside: every edge (all ≥ 1 m). Outside: the four faces that jog
         // plus the overall 4 m width and 3 m depth; the full-span bottom and

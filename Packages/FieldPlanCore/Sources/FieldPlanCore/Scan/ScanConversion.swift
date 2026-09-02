@@ -238,7 +238,19 @@ public enum ScanConversion {
     /// Automatic room classification from what the scanner recognized inside
     /// the room. Used when neither the user nor the scanner supplied a label,
     /// so every room still arrives named on the plan (CubiCasa-style).
-    public static func inferRoomType(objectNames: [String], floorArea: Double? = nil) -> RoomType? {
+    /// - Parameters:
+    ///   - doorwayCount: how many doors and cased openings lead into the
+    ///     space. A room you walk *through* is circulation, not storage —
+    ///     the one thing that separates a small hallway from a closet, since
+    ///     neither has any fixtures and both are small.
+    ///   - narrowness: long side ÷ short side, when known. A corridor is
+    ///     much longer than it is wide.
+    public static func inferRoomType(
+        objectNames: [String],
+        floorArea: Double? = nil,
+        doorwayCount: Int? = nil,
+        narrowness: Double? = nil
+    ) -> RoomType? {
         let names = Set(objectNames.map { $0.lowercased() })
         // Wet rooms first — their fixtures are unambiguous.
         if names.contains("toilet") || names.contains("bathtub") || names.contains("shower") {
@@ -257,8 +269,21 @@ public enum ScanConversion {
         if names.contains("fireplace") || names.contains("television") { return .livingRoom }
         if names.contains("table") && names.contains("chair") { return .diningRoom }
         if names.contains("stairs") { return .stairHall }
-        if let area = floorArea, area < 4.0, names.isEmpty || names == ["storage"] {
-            return .closet
+
+        // Nothing recognisable inside: the shape and the ways in decide.
+        // A closet is entered through one doorway and shut. A hallway is
+        // walked through, so it has another way out, and it is long for its
+        // width. Neither has fixtures and both can be small, which is why
+        // area alone used to call every little hallway a closet.
+        if names.isEmpty || names == ["storage"] {
+            let corridorShaped = (narrowness ?? 1) >= 2.5
+            if corridorShaped, doorwayCount == nil || (doorwayCount ?? 0) >= 2 {
+                return .hallway
+            }
+            if let area = floorArea, area < 4.0 {
+                if let doorwayCount, doorwayCount >= 2 { return .hallway }
+                return .closet
+            }
         }
         return nil
     }
@@ -298,19 +323,34 @@ public enum ScanConversion {
             let interior = GeometryCleaner.interiorPolygon(fromCenterlineLoop: face, walls: planar)
             let contained = level.fixtures.filter { GeometryOps.polygonContains(face, $0.center) }
             let area = GeometryOps.area(interior)
-            let fixtureType = inferRoomType(
-                objectNames: contained.map { $0.category.rawValue },
-                floorArea: area)
-            // The scanner's own section label for this face, when it put one
-            // inside it.
-            let hintType = hints.first { GeometryOps.polygonContains(face, $0.center) }?.type
-            let type = resolvedRoomType(fixture: fixtureType, hint: hintType)
 
             // Walls bounding this face, and the ceiling height they agree on.
             let bounding = level.walls.filter {
                 GeometryOps.distanceToPolygonBoundary(face, $0.midpoint) <= $0.thickness / 2 + 0.10
             }
             let heights = bounding.map(\.height).sorted()
+
+            // Ways into this space: doors and cased openings sitting on its
+            // own boundary. Two or more mean it is walked through.
+            let doorways = bounding.reduce(0) { total, wall in
+                total + wall.openings.filter { opening in
+                    guard opening.kind != .window else { return false }
+                    let at = wall.point(atOffset: opening.centerOffset)
+                    return GeometryOps.distanceToPolygonBoundary(face, at) <= wall.thickness / 2 + 0.10
+                }.count
+            }
+            let extents = GeometryOps.orientedExtents(interior)
+            let narrowness = extents.map { $0.depth > 1e-6 ? $0.width / $0.depth : 1 }
+
+            let fixtureType = inferRoomType(
+                objectNames: contained.map { $0.category.rawValue },
+                floorArea: area,
+                doorwayCount: doorways,
+                narrowness: narrowness)
+            // The scanner's own section label for this face, when it put one
+            // inside it.
+            let hintType = hints.first { GeometryOps.polygonContains(face, $0.center) }?.type
+            let type = resolvedRoomType(fixture: fixtureType, hint: hintType)
             // Carry provenance from whichever scanned room covered this face.
             let origin = level.rooms.first { GeometryOps.polygonContains($0.polygon, GeometryOps.centroid(face)) }
 
@@ -568,9 +608,13 @@ public enum ScanConversion {
             })
             if type == .other {
                 let floorArea = polygon.count >= 3 ? GeometryOps.area(polygon) : nil
+                let doorways = roomWalls.reduce(0) { $0 + $1.openings.filter { $0.kind != .window }.count }
+                let extents = polygon.count >= 3 ? GeometryOps.orientedExtents(polygon) : nil
                 type = inferRoomType(
                     objectNames: scanned.objects.map(\.categoryName),
-                    floorArea: floorArea
+                    floorArea: floorArea,
+                    doorwayCount: doorways,
+                    narrowness: extents.map { $0.depth > 1e-6 ? $0.width / $0.depth : 1 }
                 ) ?? .other
             }
 

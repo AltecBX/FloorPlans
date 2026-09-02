@@ -141,6 +141,7 @@ final class PlanGeneratorTests: XCTestCase {
         let level = SampleFixtures.rectangularRoom(widthFeet: 10, depthFeet: 10)
         var options = PlanGenerator.Options()
         options.showDimensions = true
+        options.showRoomDimensions = false   // chains instead of a label size
         let scene = PlanGenerator.scene(for: level, options: options)
         let texts: [String] = scene.layer(.dimensions)!.primitives.compactMap {
             if case .text(let s, _, _, _, _, _) = $0 { return s }

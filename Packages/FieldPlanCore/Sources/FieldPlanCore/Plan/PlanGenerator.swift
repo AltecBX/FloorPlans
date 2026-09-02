@@ -720,11 +720,14 @@ public enum PlanGenerator {
         let minimumLength = options.minimumDimensionedWallLength
         let textHeight = options.dimensionTextHeight
 
-        // Interior: room polygon edges, inside the room. Rooms too small to
-        // hold a dimension clear of their label keep theirs in the W × D line,
-        // and a plain rectangle reads from that line too unless asked.
+        // Interior: room polygon edges, inside the room. A room whose label
+        // already states its size does not get them — the same numbers twice
+        // is what makes a plan look cluttered rather than measured. Rooms too
+        // small to hold a dimension clear of their label keep theirs in the
+        // W × D line, and a plain rectangle reads from that line too.
+        let labelCarriesSize = options.showRoomLabels && options.showRoomDimensions
         let interiorMinimum = max(minimumLength, 1.0)
-        for room in level.rooms where includeElement(room.changeStatus, mode: mode) {
+        for room in level.rooms where !labelCarriesSize && includeElement(room.changeStatus, mode: mode) {
             let polygon = GeometryOps.counterClockwise(room.polygon)
             guard polygon.count >= 3, min(room.bounds.width, room.bounds.height) >= 2.0 else { continue }
             switch options.interiorDimensions {

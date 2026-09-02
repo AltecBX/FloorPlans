@@ -69,6 +69,16 @@ struct PlanPenStyle {
     var width: CGFloat        // points, zoom-independent
     var dash: [CGFloat]?
 
+    /// Text that must always read left-to-right on screen, whichever way the
+    /// plan has been turned. Room names, their sizes and the warning markers
+    /// are read, not measured along a line.
+    static func staysUpright(_ pen: PlanPen) -> Bool {
+        switch pen {
+        case .roomLabel, .areaLabel, .annotation, .finding, .photoMarker: return true
+        default: return false
+        }
+    }
+
     static func style(for pen: PlanPen, dark: Bool) -> PlanPenStyle {
         let ink: UIColor = dark ? UIColor(white: 0.92, alpha: 1) : UIColor(white: 0.1, alpha: 1)
         let mid: UIColor = dark ? UIColor(white: 0.65, alpha: 1) : UIColor(white: 0.42, alpha: 1)
@@ -209,7 +219,12 @@ enum PlanSceneRenderer {
             let fontSize = max(4, CGFloat(height) * transform.scale)
             guard fontSize < 400 else { return }
             let viewPoint = transform.toView(position)
-            let screenAngle = transform.viewAngle(forPlanAngle: rotation)
+            // Room names and their sizes stay upright however the plan is
+            // turned; only dimension text lies along its own line, which is
+            // the drafting convention.
+            let screenAngle = PlanPenStyle.staysUpright(pen)
+                ? 0
+                : transform.viewAngle(forPlanAngle: rotation)
             let weight: Font.Weight = pen == .roomLabel ? .semibold : .regular
             let text = Text(string)
                 .font(.system(size: fontSize, weight: weight))
@@ -373,7 +388,9 @@ enum PlanImageRenderer {
             let attributed = NSAttributedString(string: string, attributes: attributes)
             let textSize = attributed.size()
             let viewPoint = transform.toView(position)
-            let screenAngle = transform.viewAngle(forPlanAngle: rotation)
+            let screenAngle = PlanPenStyle.staysUpright(pen)
+                ? 0
+                : transform.viewAngle(forPlanAngle: rotation)
 
             cg.saveGState()
             cg.translateBy(x: viewPoint.x, y: viewPoint.y)

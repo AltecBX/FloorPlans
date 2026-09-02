@@ -117,7 +117,13 @@ struct PlanCanvasView: View {
         let rotate = RotateGesture()
             .onChanged { value in
                 if baseRotation == nil { baseRotation = transform.rotation }
-                transform.rotation = (baseRotation ?? 0) + CGFloat(value.rotation.radians)
+                let raw = (baseRotation ?? 0) + CGFloat(value.rotation.radians)
+                // A pinch to zoom always carries a little twist with it. Snap
+                // to the nearest quarter turn so the plan sits square unless
+                // it is turned deliberately, instead of drifting off-axis.
+                let quarter = CGFloat.pi / 2
+                let nearest = (raw / quarter).rounded() * quarter
+                transform.rotation = abs(raw - nearest) < 0.20 ? nearest : raw
             }
             .onEnded { _ in baseRotation = nil }
 
