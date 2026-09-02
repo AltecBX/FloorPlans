@@ -339,6 +339,7 @@ coverage, confidence and validation** — none of which CubiCasa exposes.
 ## Part 4 — Prioritised plan (mapped to the brief)
 
 Stage 1 — evidence, live quality, coverage, validation (brief §4–§9, §17, §21, §22)
+— **done, build 12.**
 
 - Raw capture on the shared `ARSession` (poses, intrinsics, tracking state,
   depth stats, light, mesh anchors with classification, IMU, heading,
@@ -356,25 +357,33 @@ Stage 1 — evidence, live quality, coverage, validation (brief §4–§9, §17,
   from the element tapped on the plan.
 - Positioned snapshots during the scan, drawn as markers on the plan.
 
-Stage 2 — reconstruction (brief §7, §10–§14, §16)
+Stage 2 — reconstruction (brief §7, §10–§14, §16) — **done, build 13**
+(`Docs/SCAN_PIPELINE.md`, "Reconstruction").
 
 - Centerline walls with measured/assumed thickness; partitions measured from
-  facing surfaces; polygon inset so areas remain interior; migration of
-  existing snapshots.
-- Curved walls as arc-sampled segments with the radius retained.
-- All RoomPlan sections bridged; per-face typing.
-- Mesh-fit wall evidence (robust line fit, residual, coverage) recorded next
+  facing surfaces (or from the neighbouring room's floor edge when only one
+  face was walked); lone faces offset outward; corners closed after the
+  offset; polygon inset so areas remain interior; migration of existing
+  snapshots on load and import, written back once.
+- Curved walls as arc-sampled segments with the radius retained (stage 1).
+- All RoomPlan sections bridged; per-face typing (stage 1).
+- Mesh-fit wall evidence (robust line fit, residual, inliers) recorded next
   to RoomPlan's line for comparison by the accuracy framework — **not**
   substituted until validated.
-- Level elevation and transform; automatic level assignment; alignment.
-- Door style (hinged/sliding/pocket/bifold/double) and open state.
+- Level elevation; rooms grouped by floor height and assigned to levels in
+  one walk; per-story coverage map; 3D stacked at measured heights; Align
+  Below (stairs, then footprint) in the Levels manager.
+- Dimensions moved here because they depend on the centerline model: face
+  to face inside jogged rooms, outside-face chains where a side jogs, overall
+  extents outside; quantities along the painted faces.
+- Door open state (stage 1). Door *style* rendering and its editor control
+  remain in stage 3.
 
 Stage 3 — presentation, editing, exports, contractor (brief §10, §11, §18–§20,
 §24)
 
-- Interior dimension chains from room polygons, exterior overall chain,
-  lane-packed to avoid collisions; stair symbol with direction; findings and
-  photo layers; confidence shading.
+- Door styles drawn (sliding/pocket/bifold/double); stair symbol with
+  direction; confidence shading; lane packing where dimensions collide.
 - Editor: door style, wall thickness source, set north / rotate, rename level.
 - Door and window schedules; JPG; OBJ export; contractor rollups (tile,
   paintable area, volume, fixture counts).

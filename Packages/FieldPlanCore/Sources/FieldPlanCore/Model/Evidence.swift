@@ -278,6 +278,7 @@ public enum EvidenceAttachment {
     public static func attach(
         to level: LevelGeometry,
         grid: CoverageGrid?,
+        chunks: [MeshChunk] = [],
         trackingNormalFraction: Double?,
         sessionID: UUID?
     ) -> LevelGeometry {
@@ -288,13 +289,20 @@ public enum EvidenceAttachment {
             let wall = result.walls[i]
             guard wall.source == .lidarScanned else { continue }
             let coverage = grid?.wallCoverage(wall)
+            // An independent line fit to the mesh beside the wall, kept as the
+            // alternate measurement for the accuracy framework to judge.
+            let fit = chunks.isEmpty ? nil : WallFitter.fit(
+                wall: wall, chunks: chunks,
+                floorElevation: grid?.floorElevation ?? level.elevation,
+                ceilingElevation: grid?.ceilingElevation)
             let evidence = ConfidenceModel.evidence(
                 scanner: wall.confidence,
                 coverage: coverage?.fraction,
                 observationCount: coverage.map { Int($0.meanHits * Double($0.coveredSamples)) },
                 trackingQuality: trackingNormalFraction,
                 bothSidesSeen: wall.thicknessSource == .measured ? true : nil,
-                sessionID: sessionID)
+                sessionID: sessionID,
+                alternate: fit?.alternate)
             result.walls[i].evidence = evidence
             wallScores[wall.id] = evidence
 

@@ -60,9 +60,11 @@ public struct RoomCalculations: Codable, Hashable, Sendable {
 
     /// Computes all quantities for one room from the level geometry.
     ///
-    /// Wall areas: when the room has bounding walls, wall quantities use those
-    /// walls' true lengths/heights and openings. When it has none (polygon
-    /// only), wall quantities fall back to perimeter × ceiling height.
+    /// Wall areas are the room's *interior faces*: each edge of the room
+    /// polygon times the height of the wall along it (a contractor paints and
+    /// tiles faces, not centerlines). Openings come from the bounding walls.
+    /// A room with no polygon falls back to its walls' lengths, and one with
+    /// no walls to perimeter × ceiling height.
     public static func compute(room: RoomShape, in level: LevelGeometry) -> RoomCalculations {
         var calc = RoomCalculations(roomID: room.id)
         calc.floorArea = room.floorArea
@@ -79,8 +81,33 @@ public struct RoomCalculations: Codable, Hashable, Sendable {
         }
 
         if !walls.isEmpty {
-            calc.wallLengths = walls.map(\.length)
-            calc.grossWallArea = walls.reduce(0) { $0 + $1.grossArea }
+            let polygon = room.polygon
+            if polygon.count >= 3 {
+                let n = polygon.count
+                var lengths: [Double] = []
+                var gross = 0.0
+                let fallbackHeight = calc.ceilingHeight ?? walls.map(\.height).max() ?? 0
+                for i in 0..<n {
+                    let a = polygon[i]
+                    let b = polygon[(i + 1) % n]
+                    let length = a.distance(to: b)
+                    let mid = a.midpoint(b)
+                    // The wall along this face, if one is close enough.
+                    let along = walls.min {
+                        GeometryOps.distanceToSegment(mid, $0.start, $0.end) < GeometryOps.distanceToSegment(mid, $1.start, $1.end)
+                    }
+                    let height = along.flatMap {
+                        GeometryOps.distanceToSegment(mid, $0.start, $0.end) <= 0.4 ? $0.height : nil
+                    } ?? fallbackHeight
+                    lengths.append(length)
+                    gross += length * height
+                }
+                calc.wallLengths = lengths
+                calc.grossWallArea = gross
+            } else {
+                calc.wallLengths = walls.map(\.length)
+                calc.grossWallArea = walls.reduce(0) { $0 + $1.grossArea }
+            }
             var windowArea = 0.0
             var doorArea = 0.0
             var doors = 0

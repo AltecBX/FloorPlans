@@ -347,7 +347,8 @@ public enum SampleFixtures {
             name: "Existing Conditions",
             kind: .existingConditions,
             isLocked: true,
-            levels: levels
+            levels: levels,
+            schemaVersion: GeometryMigration.currentSchemaVersion
         )
         var meta = ProjectMeta(name: "SAMPLE — One Bedroom Renovation")
         meta.clientName = "Sample Client"

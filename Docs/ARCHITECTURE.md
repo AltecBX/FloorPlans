@@ -58,17 +58,24 @@ through screens.
 4. `CapturedRoomBridge` mechanically maps RoomPlan types to `ScannedRoomDTO`
    (the only file that reads RoomPlan geometry types), including door open
    state, curved-wall arcs, stories and every section label.
-5. `ScanConversion.convert` (core, tested) builds walls with openings,
-   room polygons (floor `polygonCorners` first, wall loop fallback),
-   fixtures — deduplicating partitions captured from both sides — and
-   `merge` replaces re-scanned rooms in the level and splits a continuous
-   capture into its rooms.
-6. `EvidenceAttachment` scores every scanned element from the coverage grid
-   and the session's tracking record; `NorthEstimator` places north from the
+5. `LevelAssignment` groups the captured rooms by floor height; the group
+   holding the first room goes to the selected level, any other to a level a
+   story up or down (created if needed), with the owner told once.
+6. `ScanConversion.convert` (core, tested) builds each group's wall faces
+   with openings, room polygons (floor `polygonCorners` first, wall loop
+   fallback) and fixtures, then `WallAssembly` turns faces into walls:
+   facing pairs become one centerline with a measured thickness, lone faces
+   are offset outward with an assumed one, corners are closed. `merge`
+   replaces re-scanned rooms in the level and splits a continuous capture
+   into its rooms, each inset by half its walls' thickness.
+7. `EvidenceAttachment` scores every scanned element from the coverage grid,
+   a mesh line fit (`WallFitter`, kept as the alternate measurement) and the
+   session's tracking record; `NorthEstimator` places north from the
    compass; `MissingSpaceDetector` reports what looks unscanned.
-7. The level is saved into the active `PlanSnapshot` (a JSON file), QA runs,
+8. The level is saved into the active `PlanSnapshot` (a JSON file), QA runs,
    and every downstream feature (plan, 3D, takeoff, report, export, accuracy
-   tests) reads that same canonical geometry.
+   tests) reads that same canonical geometry: wall centerlines for drawing
+   and 3D, room polygons (the painted faces) for dimensions and quantities.
 
 ## Plan versions
 
@@ -102,6 +109,11 @@ DXF (layers). One geometry source; identical output everywhere.
 - Geometry snapshots and the `.fieldplan` package embed
   `ProjectArchive.schemaVersion`; the decoder refuses newer versions and has
   a migration hook for older ones (§52).
+- Geometry semantics are versioned separately per snapshot
+  (`PlanSnapshot.schemaVersion`, current 2 = scanned walls are centerlines).
+  `GeometryMigration` brings older snapshots forward on load and on import,
+  and the store writes the result back so it runs once. See
+  `Docs/SCAN_PIPELINE.md`.
 - Files are written atomically; blobs (photos, scans, USDZ) are referenced
   by name, never embedded in JSON (§39).
 

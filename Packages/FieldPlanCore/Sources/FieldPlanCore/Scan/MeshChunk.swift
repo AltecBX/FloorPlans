@@ -322,12 +322,15 @@ public struct MeshFaceClassifier: Sendable {
     /// Ceiling elevation as the 95th percentile of horizontal faces at least
     /// 1.5 m above the floor.
     public static func estimateCeilingElevation(_ chunks: [MeshChunk], floorElevation: Double,
-                                                horizontalNormalMin: Double = 0.8) -> Double? {
+                                                horizontalNormalMin: Double = 0.8,
+                                                maximumHeight: Double = 4.5) -> Double? {
         var heights: [Double] = []
         for chunk in chunks {
             for face in 0..<chunk.faceCount {
                 let y = chunk.faceCentroid(face).y
-                guard y > floorElevation + 1.5 else { continue }
+                // Only this story's band: a scan that climbed a staircase
+                // has another floor and ceiling above it.
+                guard y > floorElevation + 1.5, y < floorElevation + maximumHeight else { continue }
                 if let known = chunk.faceClass(face) {
                     if known == .ceiling { heights.append(y) }
                     if known != .none { continue }

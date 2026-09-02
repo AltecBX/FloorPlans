@@ -153,27 +153,83 @@ anywhere that does not come from these samples.
 
 ## Reconstruction (stage 2)
 
-- Walls become **centerlines** with `thicknessSource`: partitions captured
-  from both sides are measured (gap between facing surfaces), single-face
-  walls are offset outward by an assumed thickness (marked assumed). Room
-  polygons stay interior (RoomPlan floor corners, or wall-graph faces inset
-  by half thickness). Quantities use interior faces; drawings and 3D use
-  centerlines; the two now agree with each other and with the floor.
-- Curved walls are arc-sampled into segments; the radius is kept as evidence.
-- All RoomPlan sections (with centres and stories) bridge through and type the
-  recovered faces.
-- Mesh wall fits (robust 2D line fit on wall-classified faces near a wall)
-  are recorded as the alternate measurement, never substituted until the
-  accuracy framework shows they are better.
-- `LevelGeometry.elevation` from the captured floor; automatic story
-  assignment when the AR frame is continuous; registration for separate
-  sessions.
+RoomPlan reports wall *surfaces*: the face of a wall as seen from inside a
+room, with no thickness. Stage 2 turns faces into walls.
+
+**Wall assembly** (`WallAssembly.assemble`, after `ScanConversion.convert`
+has built every room's faces):
+
+1. *Facing pairs.* Two parallel faces 4–45 cm apart that overlap along
+   their length are the two sides of one wall. They become one centerline
+   midway between them, spanning both, with `thickness` = the gap and
+   `thicknessSource = .measured`. The higher-confidence face keeps its id;
+   openings from both faces are re-placed by world position.
+2. *Same-side duplicates* (a face captured twice, < 4 cm apart) fold into
+   the better one.
+3. *Lone faces* are offset half a wall away from the room they bound. Which
+   side that is comes from the room polygons (a close probe first, since the
+   face sits on its room's floor edge; a 30 cm probe when the floor stops
+   short). What lies behind decides the thickness: a neighbouring room's
+   floor edge within pairing range is the far face (measured); a neighbour
+   further back, up to 75 cm, makes it a partition (4½" assumed); nothing
+   makes it exterior (6" assumed). A face whose side cannot be told (one
+   floor polygon spanning both rooms) stays where it was with
+   `thicknessSource = nil`, which every consumer reads as "this line is the
+   room boundary, not a centerline".
+4. *Corners.* Offsetting pulls neighbours apart by a few inches.
+   `closeCorners` extends walls meeting at an angle to their intersection,
+   joins collinear neighbours end to end, and runs loose ends on to the
+   centerline they stop against (a partition on an exterior wall). Ends
+   more than 30 cm apart — a doorway between two wall segments — are left.
+
+**Room polygons** stay interior. A room from a floor surface keeps RoomPlan's
+floor corners; a room recovered from the wall graph (`splitIntoRooms`) is
+the graph face inset by half the thickness of each wall that carries a
+`thicknessSource` (`GeometryCleaner.interiorPolygon`). The editor rebuilds
+rooms the same way, and manual rooms are entered as clear dimensions with
+their centerlines placed half a wall outside.
+
+**Quantities** (`RoomCalculations`) run along the polygon edges — the
+painted faces — so gross wall area no longer grows when a centerline moves
+outward. **Dimensions** read the way a drafter reads them: each jogged room
+face to face inside, the footprint's outside faces where a side jogs, and
+the overall width and depth in an outer lane; a rectangle reads from its
+W × D label (`PlanGenerator.Options.interiorDimensions`). Nothing is
+measured along a centerline.
+
+**Mesh line fits** (`WallFitter`): a deterministic RANSAC line through the
+wall-classified mesh faces beside each scanned wall, at 15 cm–2.2 m above
+the floor, with residual and inlier count. It is stored as the wall's
+`AlternateMeasurement` for the accuracy framework to judge and never
+replaces RoomPlan's value.
+
+**Stories** (`LevelAssignment`): captured rooms group by floor height (1.2 m
+tolerance, one flow's frame). The group holding the first room scanned is
+the level the owner selected; other groups go to a level within 1.2 m or a
+new one a story up or down, named by story index, with the owner told once.
+Heights are stored relative to the selected level because every scan starts
+its own AR frame. The coverage map for another story is rebuilt from the
+session's mesh at that floor height, with the ceiling estimate capped to the
+story's band. The 3D viewer stacks levels at measured heights when every
+level has one.
+
+**Registration** (`LevelRegistration`): translate/rotate a whole level
+(north turns with it); "Align Below" in the Levels manager puts a level's
+staircase over the one below, or its footprint centre when there is no
+stair.
 
 ## Snapshot files and migration
 
-- `PlanSnapshot.schemaVersion` (nil = 1). Stage 2 introduces version 2
-  (centerline walls) with a migration that offsets legacy surface-line walls
-  outward by half their thickness using the rooms beside them.
+- `PlanSnapshot.schemaVersion` (nil = 1, current = 2). Version 2 means
+  scanned walls are centerlines. `GeometryMigration` brings a version-1
+  snapshot forward once, on load and on `.fieldplan` import: each
+  `lidarScanned` wall with no `thicknessSource` is placed from the rooms
+  beside it — a room on one side pushes it half a wall outward (assumed); a
+  room on each side puts it midway between the two floor edges with the
+  total as measured thickness when that is ≤ 45 cm; a wall the rooms cannot
+  place is left exactly where it was — then the moved walls' corners are
+  closed. Sample and manual walls are untouched. Migration is idempotent and
+  the file is written back so it never runs twice.
 - New model fields are optional so version-1 files decode unchanged.
 - `ScanRecord.sessionID` links a RoomPlan capture to its sensor session;
   `.fieldplan` packages include `sessions/`.

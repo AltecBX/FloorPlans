@@ -293,8 +293,11 @@ public enum ScanConversion {
         var result = level
         var rooms: [RoomShape] = []
         for face in faces {
+            // The face runs along wall centerlines; the room is the space
+            // inside the wall faces.
+            let interior = GeometryCleaner.interiorPolygon(fromCenterlineLoop: face, walls: planar)
             let contained = level.fixtures.filter { GeometryOps.polygonContains(face, $0.center) }
-            let area = GeometryOps.area(face)
+            let area = GeometryOps.area(interior)
             let fixtureType = inferRoomType(
                 objectNames: contained.map { $0.category.rawValue },
                 floorArea: area)
@@ -315,7 +318,7 @@ public enum ScanConversion {
                 // Empty name: `merge` numbers them once every type is known.
                 name: "",
                 type: type,
-                polygon: face,
+                polygon: interior,
                 ceilingHeight: heights.isEmpty ? origin?.ceilingHeight : heights[heights.count / 2],
                 ceilingHeightSource: origin?.ceilingHeightSource ?? .lidarScanned,
                 wallIDs: bounding.map(\.id),
@@ -326,9 +329,11 @@ public enum ScanConversion {
         result.rooms = rooms
         for index in result.fixtures.indices {
             let center = result.fixtures[index].center
-            result.fixtures[index].roomID = rooms.first {
-                GeometryOps.polygonContains($0.polygon, center)
-            }?.id
+            // A fixture against a wall may sit inside the wall's half
+            // thickness; the nearest room within that band still owns it.
+            result.fixtures[index].roomID = rooms.first { GeometryOps.polygonContains($0.polygon, center) }?.id
+                ?? rooms.min { GeometryOps.distanceToPolygonBoundary($0.polygon, center) < GeometryOps.distanceToPolygonBoundary($1.polygon, center) }
+                    .flatMap { GeometryOps.distanceToPolygonBoundary($0.polygon, center) <= 0.2 ? $0.id : nil }
         }
         return result
     }
@@ -607,8 +612,17 @@ public enum ScanConversion {
             }
         }
 
-        // Deduplicate shared partition walls captured once per room.
-        result = dedupeSharedWalls(result)
+        // Faces → walls: partitions seen from both sides become one centerline
+        // with a measured thickness; lone faces are offset outward with an
+        // assumed one (`WallAssembly`).
+        let assembled = WallAssembly.assemble(walls: result.walls, rooms: result.rooms)
+        result.walls = assembled.walls
+        for r in result.rooms.indices {
+            var seen = Set<UUID>()
+            result.rooms[r].wallIDs = result.rooms[r].wallIDs
+                .map { assembled.replaced[$0] ?? $0 }
+                .filter { seen.insert($0).inserted }
+        }
         return result
     }
 

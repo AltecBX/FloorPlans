@@ -70,12 +70,39 @@ PDF report, and every export (PNG/SVG/DXF/CSV/JSON/.fieldplan).
 17. **Storage**: Settings shows the sensor-data toggle; a 5-minute scan should
     add roughly 20–60 MB under the project's `sessions/` folder.
 
+## Reconstruction (build 13) — verify on the property
+
+18. **Partition thickness**: scan two adjoining rooms in one session, walking
+    both sides of the wall between them. Tap that wall on the plan: it
+    should say the thickness is *measured* and the value should be within
+    ½" of a tape across the door jamb. An exterior wall says *assumed*.
+19. **Room size unchanged**: the W × D under each room name must match the
+    tape face to face — the walls moved to their centerlines, the rooms did
+    not grow. The overall dimensions outside the plan are outside face to
+    outside face (room + one wall each side).
+20. **Corners closed**: no gaps or overshoots where walls meet in the plan or
+    in 3D; a partition runs into the exterior wall, not short of it.
+21. **Old projects**: open a project scanned with build 12 or earlier. Its
+    walls are moved outward by half a wall once (the log says "Migrated
+    snapshot … v2"), room sizes stay the same, and the Existing Conditions
+    plan still matches the tape. Report any wall left floating.
+22. **Two stories in one walk**: start on the ground floor, climb the stairs
+    and scan one room above without stopping. After Finish & Save an alert
+    should say the upper room went to "Second Floor" (created if needed);
+    Levels shows its floor height above the lowest; the 3D viewer stacks the
+    two at that height.
+23. **Align Below**: with two levels scanned in separate sessions, swipe the
+    upper level right in Levels → Align Below. With a staircase on both it
+    lands over the stair; otherwise the footprints are centred.
+24. **Manual room**: draw a room by dimensions; its label reads the typed
+    clear size and the walls sit outside it.
+
 ## Known limitations to verify/accept
 
 - Rooms scanned in *separate* sessions do not share a coordinate space; they
-  are placed as captured and may need repositioning in the editor (scan
-  connected areas in one session for best alignment).
-- RoomPlan curved-wall output is flattened to straight segments between
-  polygon corners.
+  are placed as captured. Use Align Below, or move them in the editor.
+- A partition seen from one side only, inside a single floor polygon that
+  spans both rooms, is left on the captured face (thickness unknown) and the
+  room behind it reads one wall too wide. Walk both sides of every partition.
 - Very cluttered/mirrored rooms reduce capture confidence — check the QA
   screen after each floor.

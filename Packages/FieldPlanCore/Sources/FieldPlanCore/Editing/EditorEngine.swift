@@ -694,7 +694,8 @@ public enum EditorEngine {
             let walls = room.wallIDs.compactMap { id in result.walls.first { $0.id == id } }
             guard walls.count >= 3 else { continue }
             if let polygon = GeometryCleaner.loopPolygon(from: walls, tolerance: 0.2) {
-                result.rooms[i].polygon = polygon
+                // The loop follows the centerlines; the room is inside the faces.
+                result.rooms[i].polygon = GeometryCleaner.interiorPolygon(fromCenterlineLoop: polygon, walls: walls)
             }
         }
         return result

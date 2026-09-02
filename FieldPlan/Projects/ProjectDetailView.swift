@@ -221,6 +221,7 @@ struct LevelsManagerView: View {
     @State private var snapshot: PlanSnapshot? = nil
     @State private var newLevelName = ""
     @State private var errorMessage: String? = nil
+    @State private var notice: String? = nil
 
     static let suggestedNames = [
         "Basement", "Cellar", "First Floor", "Second Floor", "Third Floor",
@@ -240,6 +241,11 @@ struct LevelsManagerView: View {
                                 Text("\(level.rooms.count) rooms · \(level.walls.count) walls")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
+                                if let height = relativeFloorHeight(of: level, in: snapshot) {
+                                    Text(height)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
                             }
                         }
                         .swipeActions {
@@ -248,6 +254,25 @@ struct LevelsManagerView: View {
                                     deleteLevel(level)
                                 } label: {
                                     Label("Delete", systemImage: "trash")
+                                }
+                            }
+                        }
+                        .swipeActions(edge: .leading) {
+                            if levelBelow(level, in: snapshot) != nil {
+                                Button {
+                                    alignToLevelBelow(level)
+                                } label: {
+                                    Label("Align Below", systemImage: "square.stack.3d.up")
+                                }
+                                .tint(.blue)
+                            }
+                        }
+                        .contextMenu {
+                            if let below = levelBelow(level, in: snapshot) {
+                                Button {
+                                    alignToLevelBelow(level)
+                                } label: {
+                                    Label("Align Over \(below.name)", systemImage: "square.stack.3d.up")
                                 }
                             }
                         }
@@ -275,6 +300,11 @@ struct LevelsManagerView: View {
         } message: {
             Text(errorMessage ?? "")
         }
+        .alert("Levels Aligned", isPresented: .constant(notice != nil)) {
+            Button("OK") { notice = nil }
+        } message: {
+            Text(notice ?? "")
+        }
     }
 
     private func load() {
@@ -283,6 +313,40 @@ struct LevelsManagerView: View {
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    /// "Floor 9' 10" above the lowest scanned floor" — only meaningful once
+    /// two levels carry scanned floor heights.
+    private func relativeFloorHeight(of level: LevelGeometry, in snapshot: PlanSnapshot) -> String? {
+        let measured = snapshot.levels.compactMap(\.elevation)
+        guard measured.count > 1, let elevation = level.elevation, let lowest = measured.min() else { return nil }
+        let formatter = SettingsStore.shared.formatter
+        if elevation - lowest < 0.05 { return "Lowest scanned floor" }
+        return "Floor \(formatter.length(elevation - lowest)) above the lowest scanned floor"
+    }
+
+    /// The nearest level under this one by story index.
+    private func levelBelow(_ level: LevelGeometry, in snapshot: PlanSnapshot) -> LevelGeometry? {
+        snapshot.levels
+            .filter { $0.storyIndex < level.storyIndex }
+            .max { $0.storyIndex < $1.storyIndex }
+    }
+
+    /// Slides a level over the one below it: staircase over staircase when
+    /// both have one, footprint centre over footprint centre otherwise.
+    private func alignToLevelBelow(_ level: LevelGeometry) {
+        guard var current = snapshot, let below = levelBelow(level, in: current) else { return }
+        let byStairs = LevelRegistration.alignByStairs(level, to: below)
+        let aligned = byStairs ?? LevelRegistration.alignByFootprint(level, to: below)
+        guard let aligned, let index = current.levels.firstIndex(where: { $0.id == level.id }) else {
+            errorMessage = "Neither \(level.name) nor \(below.name) has geometry to align on yet."
+            return
+        }
+        current.levels[index] = aligned.level
+        persist(current)
+        let formatter = SettingsStore.shared.formatter
+        let how = byStairs != nil ? "its staircase over the one on" : "its footprint centred over"
+        notice = "\(level.name) moved \(formatter.length(aligned.shift.length)) to put \(how) \(below.name). Undo by moving it back in the editor if the floors do not share a stair."
     }
 
     private func addLevel() {

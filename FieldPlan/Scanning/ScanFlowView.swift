@@ -129,14 +129,15 @@ final class ScanCoordinator: NSObject, ObservableObject {
         UIApplication.shared.isIdleTimerDisabled = false
     }
 
-    /// Closes the sensor session and hands back its log and coverage map.
-    /// The next room starts a fresh session on the same AR frame.
-    func finishRecorder() -> (log: ScanSessionLog, grid: CoverageGrid?)? {
+    /// Closes the sensor session and hands back its log, coverage map and
+    /// mesh. The next room starts a fresh session on the same AR frame.
+    func finishRecorder() -> (log: ScanSessionLog, grid: CoverageGrid?, chunks: [MeshChunk])? {
         guard let recorder else { return nil }
         let grid = recorder.coverageGrid
+        let chunks = recorder.meshChunks
         let log = recorder.finish()
         self.recorder = nil
-        return (log, grid)
+        return (log, grid, chunks)
     }
 
     func endFlow() {
@@ -269,6 +270,9 @@ struct ScanFlowView: View {
     @State private var showNameSheet = false
     @State private var saving = false
     @State private var saveError: String? = nil
+    /// Where a multi-story capture's rooms ended up, told once before moving on.
+    @State private var levelNotice: String? = nil
+    @State private var noticeContinuesToReview = false
     @State private var finished = false
     @State private var reviewLevel: LevelGeometry? = nil
     @State private var reviewFindings: [SpaceFinding] = []
@@ -429,6 +433,18 @@ struct ScanFlowView: View {
         } message: {
             Text(saveError ?? "")
         }
+        .alert("Levels", isPresented: .constant(levelNotice != nil)) {
+            Button("OK") {
+                levelNotice = nil
+                if noticeContinuesToReview {
+                    showReview = true
+                } else {
+                    finished = true
+                }
+            }
+        } message: {
+            Text(levelNotice ?? "")
+        }
         .navigationDestination(isPresented: $finished) {
             FloorPlanScreen(project: project)
         }
@@ -550,7 +566,7 @@ struct ScanFlowView: View {
     /// Persists everything: raw scans, USDZ, the sensor session, converted
     /// geometry with its evidence, positioned photos (spec §8, §10, §17, §21).
     private func finishLevel() async {
-        guard let snapshot, let levelID = selectedLevelID ?? snapshot.levels.first?.id else { return }
+        guard let snapshot, let selectedID = selectedLevelID ?? snapshot.levels.first?.id else { return }
         saving = true
         defer { saving = false }
 
@@ -560,7 +576,63 @@ struct ScanFlowView: View {
         // 0. Close the sensor session first; its evidence attaches below.
         let session = coordinator.finishRecorder()
 
-        // 1. Persist raw per-room scans immediately (data preservation first).
+        // 1. Which level does each captured room belong on? Rooms group by
+        // floor height. The group holding the first room scanned is the
+        // level the owner selected; any other group is a story up or down
+        // from it — an existing level within reach, or a new one. Heights
+        // are kept relative to the selected level, since every scan starts
+        // its own frame.
+        var current: PlanSnapshot
+        do {
+            current = try store.loadSnapshot(projectID: project.id, snapshotID: snapshot.id)
+        } catch {
+            saveError = "Saving the scan failed: \(error.localizedDescription)"
+            return
+        }
+        guard let selectedIndex = current.levels.firstIndex(where: { $0.id == selectedID }) else {
+            saveError = "The selected level no longer exists."
+            return
+        }
+        let dtos = coordinator.acceptedRooms.map {
+            CapturedRoomBridge.dto(from: $0.room, name: $0.name.isEmpty ? nil : $0.name)
+        }
+        let groups = LevelAssignment.groupByFloor(dtos)
+        let firstRoomID = coordinator.acceptedRooms.first?.room.identifier
+        let baseIndex = groups.firstIndex { $0.rooms.contains { $0.id == firstRoomID } } ?? 0
+        let baseElevation = groups.isEmpty ? 0 : groups[baseIndex].elevation
+        if current.levels[selectedIndex].elevation == nil { current.levels[selectedIndex].elevation = 0 }
+        let selectedElevation = current.levels[selectedIndex].elevation ?? 0
+
+        struct Placement {
+            var levelID: UUID
+            var rooms: [ScannedRoomDTO]
+            /// Floor height in the scan's own frame (for its coverage map).
+            var scanElevation: Double
+            /// Floor height relative to the selected level (stored).
+            var levelElevation: Double
+            var message: String?
+        }
+        var placements: [Placement] = []
+        for (index, group) in groups.enumerated() {
+            let relative = selectedElevation + (group.elevation - baseElevation)
+            if index == baseIndex {
+                placements.append(Placement(levelID: selectedID, rooms: group.rooms,
+                                            scanElevation: group.elevation, levelElevation: relative, message: nil))
+                continue
+            }
+            guard let assignment = LevelAssignment.assign(
+                elevation: relative, selectedLevelID: selectedID, levels: current.levels) else { continue }
+            if let created = assignment.createdLevel { current.levels.append(created) }
+            placements.append(Placement(levelID: assignment.levelID, rooms: group.rooms,
+                                        scanElevation: group.elevation, levelElevation: relative,
+                                        message: assignment.message))
+        }
+        var levelOfRoom: [UUID: UUID] = [:]
+        for placement in placements {
+            for room in placement.rooms { levelOfRoom[room.id] = placement.levelID }
+        }
+
+        // 2. Persist raw per-room scans immediately (data preservation first).
         for (name, room) in coordinator.acceptedRooms {
             let scanID = room.identifier
             var rawName: String? = nil
@@ -580,7 +652,7 @@ struct ScanFlowView: View {
                 AppLog.scan.error("USDZ export failed: \(error.localizedDescription)")
             }
             let record = ScanRecord(
-                id: scanID, levelID: levelID,
+                id: scanID, levelID: levelOfRoom[scanID] ?? selectedID,
                 roomName: name.isEmpty ? "Auto-labeled room" : name,
                 rawDataFileName: rawName, usdzFileName: usdzName,
                 sessionID: session?.log.id)
@@ -588,7 +660,7 @@ struct ScanFlowView: View {
             context.insert(record)
         }
 
-        // 2. Merge into a structure for the combined USDZ (best effort).
+        // 3. Merge into a structure for the combined USDZ (best effort).
         if coordinator.acceptedRooms.count > 1 {
             if let structure = await coordinator.mergedStructure() {
                 do {
@@ -600,45 +672,56 @@ struct ScanFlowView: View {
             }
         }
 
-        // 3. Convert to canonical geometry and merge into the level. Rooms
-        // scanned without a name are auto-labeled from RoomPlan's own room
-        // classification or the fixtures found inside (Bedroom, Bathroom, …).
-        let dtos = coordinator.acceptedRooms.map {
-            CapturedRoomBridge.dto(from: $0.room, name: $0.name.isEmpty ? nil : $0.name)
-        }
-        let conversion = ScanConversion.convert(rooms: dtos)
-        for warning in conversion.warnings {
-            AppLog.geometry.warning("\(warning, privacy: .public)")
-        }
-
-        do {
-            var current = try store.loadSnapshot(projectID: project.id, snapshotID: snapshot.id)
-            guard var level = current.levels.first(where: { $0.id == levelID }) else {
-                saveError = "The selected level no longer exists."
-                return
+        // 4. Convert each story's rooms to canonical geometry and merge them
+        // into their level. Rooms scanned without a name are auto-labeled
+        // from RoomPlan's own classification or the fixtures found inside.
+        var touched: [LevelGeometry] = []
+        var notices: [String] = []
+        for placement in placements {
+            let conversion = ScanConversion.convert(rooms: placement.rooms)
+            for warning in conversion.warnings {
+                AppLog.geometry.warning("\(warning, privacy: .public)")
             }
-            level = ScanConversion.merge(conversion, into: level)
+            guard let index = current.levels.firstIndex(where: { $0.id == placement.levelID }) else { continue }
+            var level = ScanConversion.merge(conversion, into: current.levels[index])
 
-            // 4. Evidence: coverage and tracking from the session score every
-            // scanned element; the compass places north; the floor's height
-            // records where this level sits in the scan frame.
+            // 5. Evidence: coverage, mesh and tracking from the session score
+            // every scanned element; the compass places north. The session's
+            // own coverage map was built for the floor it started on; another
+            // story gets one built for its own floor height.
             if let session {
+                let isBase = placement.levelID == selectedID
+                let grid: CoverageGrid?
+                if isBase {
+                    grid = session.grid
+                } else if session.chunks.isEmpty {
+                    grid = nil
+                } else {
+                    grid = CoverageGrid.build(chunks: session.chunks, poses: session.log.poses,
+                                              floorElevation: placement.scanElevation)
+                }
                 level = EvidenceAttachment.attach(
                     to: level,
-                    grid: session.grid,
+                    grid: grid,
+                    chunks: session.chunks,
                     trackingNormalFraction: session.log.summary?.trackingNormalFraction,
                     sessionID: session.log.id)
                 level.scanSessionIDs = (level.scanSessionIDs ?? []) + [session.log.id]
-                if level.elevation == nil { level.elevation = session.grid?.floorElevation }
                 if level.northAngle == nil,
                    let north = NorthEstimator.northAngle(from: session.log.headings) {
                     level.northAngle = north
                 }
             }
+            if level.elevation == nil { level.elevation = placement.levelElevation }
+            current.levels[index] = level
+            touched.append(level)
+            if let message = placement.message { notices.append(message) }
+        }
 
-            current = try store.updateLevel(level, in: current, projectID: project.id)
-            if let session {
-                store.importSessionPhotos(session.log, project: project, level: level, context: context)
+        do {
+            try store.saveSnapshot(current, projectID: project.id)
+            if let session, let base = touched.first(where: { $0.id == selectedID }) ?? touched.first {
+                store.importSessionPhotos(session.log, project: project, level: base, context: context)
             }
             project.updatedAt = Date()
             if project.status == .lead { project.status = .measured }
@@ -646,14 +729,26 @@ struct ScanFlowView: View {
             self.snapshot = current
             coordinator.clearAccepted()
 
-            // 5. Before leaving the property: anything that looks unscanned?
-            let findings = MissingSpaceDetector.findings(for: level, levels: current.levels)
-            if findings.isEmpty {
-                finished = true
-            } else {
-                reviewLevel = level
-                reviewFindings = findings
+            // 6. Before leaving the property: anything that looks unscanned?
+            var pendingReview: (level: LevelGeometry, findings: [SpaceFinding])? = nil
+            for level in touched {
+                let findings = MissingSpaceDetector.findings(for: level, levels: current.levels)
+                if !findings.isEmpty {
+                    pendingReview = (level, findings)
+                    break
+                }
+            }
+            if let pending = pendingReview {
+                reviewLevel = pending.level
+                reviewFindings = pending.findings
+            }
+            if !notices.isEmpty {
+                noticeContinuesToReview = pendingReview != nil
+                levelNotice = notices.joined(separator: "\n\n")
+            } else if pendingReview != nil {
                 showReview = true
+            } else {
+                finished = true
             }
         } catch {
             saveError = "Saving the scan failed: \(error.localizedDescription)"

@@ -165,7 +165,15 @@ final class ProjectStore: ObservableObject {
             throw StoreError.snapshotMissing(snapshotID)
         }
         let data = try Data(contentsOf: url)
-        let snapshot = try ProjectArchive.decoder().decode(PlanSnapshot.self, from: data)
+        let stored = try ProjectArchive.decoder().decode(PlanSnapshot.self, from: data)
+        // Geometry semantics are versioned: a plan written before walls
+        // became centerlines is brought forward once and written back, so
+        // the migration never runs twice.
+        let snapshot = GeometryMigration.migrate(stored)
+        if snapshot.schemaVersion != stored.schemaVersion {
+            AppLog.store.info("Migrated snapshot \(snapshot.name, privacy: .public) to geometry schema v\(snapshot.schemaVersion)")
+            try saveSnapshot(snapshot, projectID: projectID)
+        }
         snapshotCache[snapshotID] = snapshot
         return snapshot
     }
@@ -200,7 +208,8 @@ final class ProjectStore: ObservableObject {
             name: "Existing Conditions",
             kind: .existingConditions,
             isLocked: false,
-            levels: [LevelGeometry(name: "First Floor", storyIndex: 0)]
+            levels: [LevelGeometry(name: "First Floor", storyIndex: 0)],
+            schemaVersion: GeometryMigration.currentSchemaVersion
         )
         try saveSnapshot(snapshot, projectID: project.id)
         let record = SnapshotRecord(

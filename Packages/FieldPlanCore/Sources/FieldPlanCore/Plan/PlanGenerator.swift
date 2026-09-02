@@ -49,8 +49,18 @@ public enum PlanGenerator {
         public var dimensionOffset = 0.55
         /// Skip dimensioning walls shorter than this.
         public var minimumDimensionedWallLength = 0.45
+        /// Which rooms get face-to-face dimensions along their edges.
+        public var interiorDimensions: InteriorDimensionStyle = .jogsOnly
 
         public init() {}
+    }
+
+    /// Edge dimensions inside rooms. A rectangle already reads its size off
+    /// the W × D label, so by default only rooms with a jog get them.
+    public enum InteriorDimensionStyle: String, Codable, Hashable, CaseIterable, Sendable {
+        case jogsOnly
+        case all
+        case none
     }
 
     // MARK: - Element inclusion by mode
@@ -294,7 +304,7 @@ public enum PlanGenerator {
         // ---- Bounds ----
         var bounds = level.bounds
         if bounds.isNull { bounds = Rect2(minX: 0, minY: 0, maxX: 1, maxY: 1) }
-        bounds = bounds.expanded(by: options.showDimensions ? options.dimensionOffset + 0.8 : 0.6)
+        bounds = bounds.expanded(by: options.showDimensions ? options.dimensionOffset * 2.1 + 0.7 : 0.6)
 
         // ---- Scale bar & north arrow ----
         if options.showScaleBar {
@@ -640,59 +650,106 @@ public enum PlanGenerator {
 
     // MARK: - Dimensions
 
+    /// Dimensions the way a drafter reads them: each room's clear dimensions
+    /// face to face, inside the room; the footprint's outside-face lengths
+    /// where a side jogs; and the overall width and depth in an outer lane.
+    /// Nothing is measured along a centerline.
     static func dimensionPrimitives(level: LevelGeometry, options: Options) -> [PlanPrimitive] {
         var out: [PlanPrimitive] = []
         let mode = options.mode
+        let minimumLength = options.minimumDimensionedWallLength
+        let textHeight = options.dimensionTextHeight
 
-        for wall in level.walls {
-            guard includeElement(wall.changeStatus, mode: mode) else { continue }
-            guard wall.length >= options.minimumDimensionedWallLength else { continue }
-
-            // Choose the offset side: prefer the side NOT inside a room
-            // (exterior), falling back to the positive perpendicular.
-            let perp = wall.direction.perpendicular
-            let probeDistance = wall.thickness / 2 + 0.25
-            let positiveProbe = wall.midpoint + perp * probeDistance
-            let negativeProbe = wall.midpoint - perp * probeDistance
-            let positiveRoom = level.rooms.first { GeometryOps.polygonContains($0.polygon, positiveProbe) }
-            let negativeRoom = level.rooms.first { GeometryOps.polygonContains($0.polygon, negativeProbe) }
-            // Short interior partitions (rooms on both sides) add clutter and
-            // collide with room labels; their lengths remain one tap away.
-            let isInterior = positiveRoom != nil && negativeRoom != nil
-            if isInterior && wall.length < 1.0 { continue }
-            let side: Double
-            var host: RoomShape? = nil
-            if positiveRoom != nil && negativeRoom == nil {
-                side = -1 // dimension on the exterior side
-            } else if negativeRoom != nil && positiveRoom == nil {
-                side = 1
-            } else if let p = positiveRoom, let n = negativeRoom {
-                // Interior partition: put the dimension in the LARGER room,
-                // where it is least likely to collide with labels/fixtures.
-                let inPositive = p.floorArea >= n.floorArea
-                side = inPositive ? 1 : -1
-                host = inPositive ? p : n
-            } else {
-                side = 1
+        // Interior: room polygon edges, inside the room. Rooms too small to
+        // hold a dimension clear of their label keep theirs in the W × D line,
+        // and a plain rectangle reads from that line too unless asked.
+        let interiorMinimum = max(minimumLength, 1.0)
+        for room in level.rooms where includeElement(room.changeStatus, mode: mode) {
+            let polygon = GeometryOps.counterClockwise(room.polygon)
+            guard polygon.count >= 3, min(room.bounds.width, room.bounds.height) >= 2.0 else { continue }
+            switch options.interiorDimensions {
+            case .none: continue
+            case .jogsOnly where isRectangle(polygon): continue
+            default: break
             }
+            let n = polygon.count
+            for i in 0..<n {
+                let a = polygon[i]
+                let b = polygon[(i + 1) % n]
+                let length = a.distance(to: b)
+                guard length >= interiorMinimum else { continue }
+                let inward = (b - a).normalized.perpendicular
+                let offset = options.dimensionOffset * 0.62
+                emitDimension(from: a, to: b,
+                              lineA: a + inward * offset, lineB: b + inward * offset,
+                              text: options.formatter.length(length),
+                              textHeight: textHeight) { out.append($0) }
+            }
+        }
 
-            // Even the larger of two small rooms cannot hold an interior
-            // dimension clear of its own label: the line lands within a foot of
-            // the wall, straight through the room name. Those walls are already
-            // dimensioned on the exterior chains and in the room's W × D label.
-            if let host, min(host.bounds.width, host.bounds.height) < 2.0 { continue }
+        // Exterior: the footprint's outside faces, then the overall extents.
+        let walls = level.walls.filter { includeElement($0.changeStatus, mode: mode) && $0.length > 0.02 }
+        guard walls.count >= 3 else { return out }
+        let planar = GeometryCleaner.splitAtJunctions(walls)
+        guard let boundary = WallGraph(walls: planar, tolerance: 0.1).exteriorBoundary(), boundary.count >= 3 else {
+            return out
+        }
+        let outside = GeometryCleaner.outsidePolygon(fromCenterlineLoop: boundary, walls: planar)
+        let bounds = Rect2(containing: outside)
+        let m = outside.count
+        // Whether a chain was drawn along the bottom or the right, so the
+        // overall can take the first lane when nothing is in it.
+        var chainBelow = false
+        var chainRight = false
+        for i in 0..<m {
+            let a = outside[i]
+            let b = outside[(i + 1) % m]
+            let length = a.distance(to: b)
+            guard length >= minimumLength else { continue }
+            // A face running the full width or depth of the footprint is
+            // already read from the overall extents below; only sides that
+            // jog need their pieces called out.
+            let spansWidth = abs(b.y - a.y) <= 0.02 && abs(b.x - a.x) >= bounds.width - 0.01
+            let spansDepth = abs(b.x - a.x) <= 0.02 && abs(b.y - a.y) >= bounds.height - 0.01
+            guard !spansWidth, !spansDepth else { continue }
+            let outward = (b - a).normalized.perpendicular * -1
+            let offset = options.dimensionOffset
+            if outward.y < -0.7, min(a.y, b.y) <= bounds.minY + 0.02 { chainBelow = true }
+            if outward.x > 0.7, max(a.x, b.x) >= bounds.maxX - 0.02 { chainRight = true }
+            emitDimension(from: a, to: b,
+                          lineA: a + outward * offset, lineB: b + outward * offset,
+                          text: options.formatter.length(length),
+                          textHeight: textHeight) { out.append($0) }
+        }
 
-            let offsetMagnitude = wall.thickness / 2
-                + options.dimensionOffset * (isInterior ? 0.62 : 1.0)
-            let offset = offsetMagnitude * side
-            let a = wall.start + perp * offset
-            let b = wall.end + perp * offset
-            let text = options.formatter.length(wall.length)
-            emitDimension(from: wall.start, to: wall.end,
-                          lineA: a, lineB: b,
-                          text: text, textHeight: options.dimensionTextHeight) { out.append($0) }
+        if bounds.width >= minimumLength {
+            let y = bounds.minY - options.dimensionOffset * (chainBelow ? 2.1 : 1.0)
+            emitDimension(from: Vec2(bounds.minX, bounds.minY), to: Vec2(bounds.maxX, bounds.minY),
+                          lineA: Vec2(bounds.minX, y), lineB: Vec2(bounds.maxX, y),
+                          text: options.formatter.length(bounds.width),
+                          textHeight: textHeight) { out.append($0) }
+        }
+        if bounds.height >= minimumLength {
+            let x = bounds.maxX + options.dimensionOffset * (chainRight ? 2.1 : 1.0)
+            emitDimension(from: Vec2(bounds.maxX, bounds.minY), to: Vec2(bounds.maxX, bounds.maxY),
+                          lineA: Vec2(x, bounds.minY), lineB: Vec2(x, bounds.maxY),
+                          text: options.formatter.length(bounds.height),
+                          textHeight: textHeight) { out.append($0) }
         }
         return out
+    }
+
+    /// Four corners, each within about 2° of square, at any rotation.
+    static func isRectangle(_ polygon: [Vec2]) -> Bool {
+        guard polygon.count == 4 else { return false }
+        for i in 0..<4 {
+            let e1 = polygon[(i + 1) % 4] - polygon[i]
+            let e2 = polygon[(i + 2) % 4] - polygon[(i + 1) % 4]
+            let l1 = e1.length, l2 = e2.length
+            guard l1 > 1e-9, l2 > 1e-9 else { return false }
+            if abs(e1.dot(e2)) > 0.035 * l1 * l2 { return false }
+        }
+        return true
     }
 
     /// Dimension with explicit measured points and dimension-line points.

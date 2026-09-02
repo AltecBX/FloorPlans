@@ -618,7 +618,8 @@ public struct PlanSnapshot: Codable, Hashable, Identifiable, Sendable {
             kind: .proposed,
             isLocked: false,
             createdAt: Date(),
-            levels: levels
+            levels: levels,
+            schemaVersion: schemaVersion
         )
     }
 }

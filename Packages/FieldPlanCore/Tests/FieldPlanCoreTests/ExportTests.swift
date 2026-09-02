@@ -146,8 +146,18 @@ final class PlanGeneratorTests: XCTestCase {
             if case .text(let s, _, _, _, _, _) = $0 { return s }
             return nil
         }
-        XCTAssertEqual(texts.count, 4)
+        // A plain rectangle reads its size off the W × D label; outside it
+        // the overall width and depth, and no per-face chain to repeat them.
+        XCTAssertEqual(texts.count, 2, "\(texts)")
         XCTAssertTrue(texts.allSatisfy { $0 == "10' 0\"" }, "\(texts)")
+
+        options.interiorDimensions = .all
+        let every: [String] = PlanGenerator.scene(for: level, options: options)
+            .layer(.dimensions)!.primitives.compactMap {
+                if case .text(let s, _, _, _, _, _) = $0 { return s }
+                return nil
+            }
+        XCTAssertEqual(every.count, 6, "four edges inside plus the two overalls: \(every)")
     }
 
     func testDoorSwingEmitted() {

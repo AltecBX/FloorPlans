@@ -1,6 +1,64 @@
 # BUILD STATUS
 
-_Last updated: 2026-09-01_
+_Last updated: 2026-09-02_
+
+## 2026-09-02 — Build 13 (version 1.3): reconstruction (scan engine stage 2)
+
+Stage 2 of the CubiCasa benchmark audit: the wall model. Design and rules
+in `Docs/SCAN_PIPELINE.md`, "Reconstruction (stage 2)".
+
+- **Faces become walls** (`WallAssembly`, core, tested). RoomPlan reports
+  wall surfaces; a partition walked from both sides arrives twice, a few
+  inches apart. Facing pairs now become one centerline midway between them
+  with the gap as a *measured* thickness (the old converter threw that gap
+  away and drew every wall at 4½"). A face seen from one side is offset half
+  a wall away from its room with an *assumed* thickness — the neighbouring
+  room's floor edge when it is within pairing range, 4½" for a partition,
+  6" for an exterior wall — and a face whose side cannot be told stays put,
+  marked `thicknessSource = nil`, which every consumer reads as "line = room
+  boundary". Corners are closed after the offset (intersection, end-to-end
+  join, or run on to the wall a partition stops against); door gaps are left.
+- **Rooms keep their face-to-face size.** Floor polygons are what RoomPlan
+  measured; rooms recovered from the wall graph are inset by half of each
+  placed wall (`GeometryOps.insetPolygon`, `GeometryCleaner.interiorPolygon`,
+  tested for L-shapes and collapse). Manual rooms are typed as clear
+  dimensions with the walls placed outside them. The editor rebuilds rooms
+  the same way.
+- **Quantities and dimensions read the painted faces.** `RoomCalculations`
+  runs along the polygon edges (gross wall area no longer grows when a
+  centerline moves). `PlanGenerator` dimensions the way a drafter reads a
+  sheet: jogged rooms face to face inside, outside-face chains only where a
+  side jogs, overall width and depth outside; a rectangle reads from its
+  W × D label (`Options.interiorDimensions`, default `.jogsOnly`). Rendered
+  and inspected: two scanned rooms with a measured partition, an L-shaped
+  footprint with a partition and a door, the sample apartment.
+- **Mesh line fits** (`WallFitter`, core, tested): deterministic RANSAC over
+  the wall-classified mesh beside each scanned wall, stored as the wall's
+  alternate measurement with residual and inlier count for the accuracy
+  framework to judge. Never substituted.
+- **Stories** (`LevelAssignment`, core, tested): captured rooms group by
+  floor height; the group holding the first room stays on the selected
+  level, the rest go to a level within 1.2 m or a new one a story up or
+  down, and the owner is told once. Elevations are relative to the selected
+  level (every scan starts its own AR frame). Other stories get their own
+  coverage map from the session mesh (ceiling estimate capped to the story
+  band). The 3D viewer stacks levels at measured heights when all have one.
+- **Registration** (`LevelRegistration`, core, tested): translate/rotate a
+  level with north following; **Align Below** in the Levels manager (swipe
+  or long-press) puts a level's staircase over the one below, or centres the
+  footprints, and says how far it moved. Levels list their floor height
+  above the lowest scanned floor.
+- **Migration** (`GeometryMigration`, core, tested): `PlanSnapshot.
+  schemaVersion` 2. Version-1 snapshots are placed from the rooms beside
+  each scanned wall on load and on `.fieldplan` import, corners closed,
+  written back once; sample and manual walls untouched; idempotent.
+- `MeshFaceClassifier.estimateCeilingElevation` now ignores faces more than
+  4.5 m above the floor so an upper story does not pass for a ceiling.
+- Core suite: 207 tests, all passing on Linux. Every app file parses; the
+  Xcode build must be done on the owner's Mac. Device checklist items 18–24
+  in `Docs/DEVICE_TESTING.md` verify partition thickness, room size, corner
+  closure, migration of an old project, two stories in one walk, Align Below
+  and manual rooms.
 
 ## 2026-09-01 — Build 12 (version 1.2): scan engine stage 1
 

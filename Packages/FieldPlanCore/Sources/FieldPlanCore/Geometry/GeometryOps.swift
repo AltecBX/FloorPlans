@@ -47,6 +47,17 @@ public enum GeometryOps {
         return (p1 + r * t, max(0, min(1, t)), max(0, min(1, u)))
     }
 
+    /// Intersection of the infinite lines through [p1,p2] and [p3,p4];
+    /// nil when they are parallel.
+    public static func lineIntersection(_ p1: Vec2, _ p2: Vec2, _ p3: Vec2, _ p4: Vec2) -> Vec2? {
+        let r = p2 - p1
+        let s = p4 - p3
+        let denom = r.cross(s)
+        guard abs(denom) > 1e-12 else { return nil }
+        let t = (p3 - p1).cross(s) / denom
+        return p1 + r * t
+    }
+
     /// True when the two segments are collinear (within angular and lateral
     /// tolerance) and their spans overlap by more than `minOverlap`.
     public static func collinearOverlap(
@@ -145,6 +156,30 @@ public enum GeometryOps {
             j = i
         }
         return inside
+    }
+
+    /// Distance along a ray from `origin` in unit `direction` to the first
+    /// polygon edge it crosses, or nil when it never does. Crossings closer
+    /// than `minimum` are ignored so a ray started on an edge looks past it.
+    public static func rayDistance(
+        from origin: Vec2, direction: Vec2, polygon: [Vec2], minimum: Double = 1e-6
+    ) -> Double? {
+        guard polygon.count >= 2 else { return nil }
+        var best: Double? = nil
+        for i in 0..<polygon.count {
+            let a = polygon[i]
+            let b = polygon[(i + 1) % polygon.count]
+            let edge = b - a
+            let denom = direction.cross(edge)
+            guard abs(denom) > 1e-12 else { continue }
+            let ao = a - origin
+            let s = ao.cross(edge) / denom        // along the ray
+            let u = ao.cross(direction) / denom   // along the edge
+            guard s >= minimum, u >= -1e-9, u <= 1 + 1e-9 else { continue }
+            if let current = best, current <= s { continue }
+            best = s
+        }
+        return best
     }
 
     /// Distance from a point to the nearest polygon edge.

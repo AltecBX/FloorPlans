@@ -163,16 +163,22 @@ struct ManualRoomView: View {
                 ]
             }
 
-            // One wall per polygon edge.
+            // One wall per polygon edge. The typed dimensions are the clear
+            // (face-to-face) room, so the wall centerlines sit half a wall
+            // outside it, with the thickness marked as assumed.
+            let thickness = 0.1143   // 4 1/2" partition, the model's default
+            let centerlines = GeometryOps.insetPolygon(polygon, by: -thickness / 2)
             var walls: [Wall] = []
             for i in 0..<polygon.count {
-                let a = polygon[i]
-                let b = polygon[(i + 1) % polygon.count]
+                let a = centerlines?[i] ?? polygon[i]
+                let b = centerlines?[(i + 1) % polygon.count] ?? polygon[(i + 1) % polygon.count]
                 walls.append(Wall(
                     start: a, end: b,
                     height: ceilingHeight,
+                    thickness: thickness,
                     source: .manualEntry,
-                    confidence: .high))
+                    confidence: .high,
+                    thicknessSource: centerlines == nil ? nil : .assumed))
             }
 
             let name = roomName.trimmingCharacters(in: .whitespaces)

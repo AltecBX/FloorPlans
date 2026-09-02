@@ -208,7 +208,10 @@ public struct ProjectArchive: Codable, Sendable {
         guard probe.schemaVersion <= currentSchemaVersion else {
             throw ArchiveError.unsupportedSchemaVersion(probe.schemaVersion)
         }
-        // Future: switch on probe.schemaVersion and migrate older payloads.
-        return try decoder().decode(ProjectArchive.self, from: data)
+        var archive = try decoder().decode(ProjectArchive.self, from: data)
+        // Geometry semantics are versioned per snapshot; old files are
+        // brought up to date on the way in.
+        archive.snapshots = archive.snapshots.map(GeometryMigration.migrate)
+        return archive
     }
 }

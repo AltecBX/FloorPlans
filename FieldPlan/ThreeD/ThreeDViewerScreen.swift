@@ -301,9 +301,15 @@ enum ThreeDSceneBuilder {
         let floorsGroup = SCNNode()
         floorsGroup.name = "floorsGroup"
 
-        let levelSpacing = 3.4 // vertical separation between stories
+        // Stories stack at their scanned floor heights when every level has
+        // one; otherwise at a typical story spacing by story index.
+        let levelSpacing = 3.4
+        let measured = levels.count > 1 && levels.allSatisfy { $0.elevation != nil }
+        let lowest = levels.compactMap(\.elevation).min() ?? 0
         for level in levels.sorted(by: { $0.storyIndex < $1.storyIndex }) {
-            let baseY = Double(level.storyIndex) * levelSpacing
+            let baseY = measured
+                ? (level.elevation ?? 0) - lowest
+                : Double(level.storyIndex) * levelSpacing
 
             for wall in level.walls where includeInMode(wall.changeStatus, mode: mode) {
                 for node in wallNodes(for: wall, mode: mode) {
