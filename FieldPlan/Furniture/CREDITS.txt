@@ -1,0 +1,27 @@
+3D furniture models
+===================
+
+Source:  Kenney Furniture Kit (2.0) — https://kenney.nl/assets/furniture-kit
+License: Creative Commons Zero (CC0 1.0 Universal, public domain dedication)
+         http://creativecommons.org/publicdomain/zero/1.0/
+
+Kenney's licence states: "This content is free to use in personal, educational
+and commercial projects. Support us by crediting Kenney or www.kenney.nl (this
+is not mandatory)."
+
+Credit is given here voluntarily.
+
+Files were renamed to the app's fixture categories and their `mtllib` lines
+retargeted to match; the geometry and materials are unmodified. Models carry no
+textures — colours come from the accompanying .mtl files.
+
+Original names:
+  bathtub      <- bathtub              bed          <- bedDouble
+  cabinetBase  <- kitchenCabinet       cabinetUpper <- kitchenCabinetUpper
+  chair        <- chairCushion         mirror       <- bathroomMirror
+  refrigerator <- kitchenFridge        shower       <- shower
+  sink         <- bathroomSink         sofa         <- loungeSofa
+  stairs       <- stairs               storage      <- cabinetBedDrawer
+  stove        <- kitchenStove         table        <- table
+  television   <- televisionModern     toilet       <- toilet
+  vanity       <- bathroomCabinet      washerDryer  <- washer

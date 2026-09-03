@@ -1,0 +1,1182 @@
+import Foundation
+
+/// Generates the vector floor plan scene from canonical geometry (spec §14).
+public enum PlanGenerator {
+
+    public struct Options: Sendable {
+        public var mode: PlanRenderMode = .existing
+        /// Dimension chains. Off by default: a client sheet reads each room's
+        /// size off its label, and the chains crowd small rooms. The plan editor
+        /// and any drawing issued to a trade turn them on.
+        public var showDimensions = false
+        public var showRoomLabels = true
+        /// "11' 5\" × 12' 0\"" under each room name (CubiCasa-style).
+        public var showRoomDimensions = true
+        /// Per-room area under the dimensions. Off by default: the totals
+        /// belong in the title block, and a third line crowds a small room.
+        public var showAreaLabels = false
+        /// Ceiling height under the room label ("CEILING 8' 0\""). Off by
+        /// default — it matters when pricing paint, drywall or trim, so it is
+        /// a switch on the plan rather than something you re-measure for.
+        public var showCeilingHeights = false
+        public var showFixtures = true
+        public var showFurniture = false
+        public var showAnnotations = true
+        /// Room colour coding by type (bedrooms warm, wet rooms cool).
+        public var showRoomColors = true
+        /// Which colour scheme the room fills use.
+        public var roomPalette: RoomPalette = .staging
+        /// How room names are cased on the plan.
+        public var roomNameStyle: RoomNameStyle = .asEntered
+        /// Off by default: a client-facing sheet reads the room dimensions off
+        /// the labels, and a graphic scale is meaningless once the sheet is
+        /// resized. Turn it on for a drawing issued to a trade.
+        public var showScaleBar = false
+        public var showNorthArrow = false
+        /// Sheet title block under the plan. Off by default: the on-screen plan
+        /// and the PDF report carry their own headers, so only standalone
+        /// exports (PNG/SVG/DXF) set one.
+        public var titleBlock: PlanTitleBlock? = nil
+        /// Missing-space findings to hatch on the plan (spec §15).
+        public var findings: [SpaceFinding] = []
+        /// Photos taken during the scan, drawn where they were taken (§17).
+        public var photoMarkers: [PlanPhotoMarker] = []
+        /// Draw walls whose evidence score is below `lowConfidenceThreshold`
+        /// in the warning pen so weak geometry is visible before it is trusted.
+        public var showConfidence = false
+        public var lowConfidenceThreshold = ConfidenceModel.mediumBand
+        public var formatter = UnitFormatter()
+        /// Dimension text height in plan meters.
+        public var dimensionTextHeight = 0.16
+        public var labelTextHeight = 0.24
+        /// Offset of dimension lines from the wall face, meters.
+        public var dimensionOffset = 0.55
+        /// Skip dimensioning walls shorter than this.
+        public var minimumDimensionedWallLength = 0.45
+        /// Which rooms get face-to-face dimensions along their edges.
+        public var interiorDimensions: InteriorDimensionStyle = .jogsOnly
+
+        public init() {}
+    }
+
+    /// Edge dimensions inside rooms. A rectangle already reads its size off
+    /// the W × D label, so by default only rooms with a jog get them.
+    public enum InteriorDimensionStyle: String, Codable, Hashable, CaseIterable, Sendable {
+        case jogsOnly
+        case all
+        case none
+    }
+
+    /// Room name casing. Names arrive already capitalised ("Primary
+    /// Bedroom"), which is how listing floor plans set them; uppercase is
+    /// there for a drawing issued to a trade.
+    public enum RoomNameStyle: String, Codable, Hashable, CaseIterable, Sendable {
+        case asEntered
+        case uppercase
+
+        public var displayName: String {
+            switch self {
+            case .asEntered: return "Title Case"
+            case .uppercase: return "UPPERCASE"
+            }
+        }
+
+        func apply(_ name: String) -> String {
+            switch self {
+            case .asEntered: return name
+            case .uppercase: return name.uppercased()
+            }
+        }
+    }
+
+    // MARK: - Element inclusion by mode
+
+    static func includeElement(_ status: ChangeStatus, mode: PlanRenderMode) -> Bool {
+        switch mode {
+        case .existing:
+            return status != .new
+        case .proposed:
+            return status != .demolish
+        case .demolition:
+            return status != .new
+        case .overlay:
+            return true
+        }
+    }
+
+    static func wallPen(for status: ChangeStatus, mode: PlanRenderMode) -> PlanPen {
+        switch (status, mode) {
+        case (.demolish, .demolition), (.demolish, .overlay):
+            return .wallDemolished
+        case (.demolish, _):
+            return .wallOutline // in pure existing view a to-demolish wall is just existing
+        case (.new, _):
+            return .wallNew
+        case (.existing, _):
+            return .wallOutline
+        }
+    }
+
+    static func wallFill(for status: ChangeStatus, mode: PlanRenderMode) -> PlanFill {
+        switch (status, mode) {
+        case (.demolish, .demolition), (.demolish, .overlay):
+            return .none
+        case (.new, _):
+            return .wallNewPoche
+        default:
+            return .wallPoche
+        }
+    }
+
+    static func layerKind(for status: ChangeStatus, mode: PlanRenderMode) -> PlanLayerKind {
+        switch status {
+        case .demolish where mode == .demolition || mode == .overlay:
+            return .demolition
+        case .new:
+            return .newConstruction
+        default:
+            return .walls
+        }
+    }
+
+    // MARK: - Scene generation
+
+    public static func scene(for rawLevel: LevelGeometry, options: Options = Options()) -> PlanScene {
+        var layers: [PlanLayerKind: [PlanPrimitive]] = [:]
+        func add(_ primitive: PlanPrimitive, to kind: PlanLayerKind) {
+            layers[kind, default: []].append(primitive)
+        }
+
+        let mode = options.mode
+        // Doors a scan could not read hinges for get their swing derived from
+        // the rooms around them; a hand-set swing always wins.
+        let level = DoorSwingInference.resolvingSwings(in: rawLevel)
+
+        // ---- Room colour coding, under everything ----
+        if options.showRoomColors {
+            for room in level.rooms {
+                guard includeElement(room.changeStatus, mode: mode) else { continue }
+                guard room.polygon.count >= 3 else { continue }
+                add(.polygon(points: room.polygon,
+                             fill: .roomTint(options.roomPalette.tint(for: room.type)),
+                             outline: nil),
+                    to: .roomFills)
+            }
+        }
+
+        // ---- Missing-space findings, hatched over the fills ----
+        for finding in options.findings {
+            emitFinding(finding) { add($0, to: .findings) }
+        }
+
+        // ---- Walls with openings ----
+        for wall in level.walls {
+            guard includeElement(wall.changeStatus, mode: mode) else { continue }
+            guard wall.length > 0.02 else { continue }
+            var pen = wallPen(for: wall.changeStatus, mode: mode)
+            if options.showConfidence, wall.changeStatus == .existing,
+               let evidence = wall.evidence, evidence.confidence < options.lowConfidenceThreshold {
+                pen = .wallUncertain
+            }
+            let fill = wallFill(for: wall.changeStatus, mode: mode)
+            let kind = layerKind(for: wall.changeStatus, mode: mode)
+            emitWall(wall, pen: pen, fill: fill, mode: mode) { add($0, to: kind == .walls ? primitiveLayer(for: $0, default: kind) : kind) }
+        }
+
+        // ---- Room boundaries for rooms without wall references ----
+        for room in level.rooms {
+            guard includeElement(room.changeStatus, mode: mode) else { continue }
+            guard room.polygon.count >= 3 else { continue }
+            if level.walls(for: room).isEmpty {
+                add(.polyline(points: room.polygon, closed: true, pen: .boundary), to: .walls)
+            }
+        }
+
+        // ---- Fixtures & furniture ----
+        for fixture in level.fixtures {
+            guard includeElement(fixture.changeStatus, mode: mode) else { continue }
+            let isFurniture = fixture.category.isFurniture
+            if isFurniture && !options.showFurniture { continue }
+            if !isFurniture && !options.showFixtures { continue }
+            let layer: PlanLayerKind = fixture.changeStatus == .new
+                ? .newConstruction
+                : (fixture.changeStatus == .demolish && (mode == .demolition || mode == .overlay)
+                    ? .demolition
+                    : (isFurniture ? .furniture : .fixtures))
+            let pen: PlanPen = fixture.changeStatus == .demolish && (mode == .demolition || mode == .overlay)
+                ? .wallDemolished
+                : (isFurniture ? .furniture : .fixture)
+            emitFixture(fixture, pen: pen) { add($0, to: layer) }
+        }
+
+        // ---- Dimensions ----
+        if options.showDimensions {
+            let dimmed = dimensionPrimitives(level: level, options: options)
+            for p in dimmed { add(p, to: .dimensions) }
+        }
+
+        // ---- Room labels (name / W×D / area, CubiCasa-style) ----
+        if options.showRoomLabels {
+            for room in level.rooms {
+                guard includeElement(room.changeStatus, mode: mode) else { continue }
+                guard room.polygon.count >= 3 else { continue }
+                let name = options.roomNameStyle.apply(room.name)
+
+                // A label is laid out along the room's long axis. Almost every
+                // room is wider than it is tall, so almost every label is
+                // horizontal — but a tall narrow room (a galley bath, a walk-in)
+                // cannot carry a horizontal label without it crossing the wall
+                // into the room next door, so there the block is turned to read
+                // bottom-to-top. Turning is a last resort, never a style.
+                let bounds = room.bounds
+                let turned = shouldTurnLabel(name, room: room, options: options)
+                // Along = the direction text runs; across = line stacking.
+                let along = max(turned ? bounds.height : bounds.width, 0.1)
+                let across = max(turned ? bounds.width : bounds.height, 0.1)
+
+                // Fit the label to the room: shrink until it fits with a visible
+                // margin from the walls, and never let a small room carry a
+                // label sized for a large one — otherwise a closet's name runs
+                // into its neighbour's and the two read as one word. Secondary
+                // lines are dropped for rooms too small to carry them.
+                let maxWidth = along * 0.78
+                var height = min(options.labelTextHeight, across * 0.20)
+                if let fitting = PlanTextMetrics.heightToFit(name, maxWidth: maxWidth) {
+                    height = min(height, fitting)
+                }
+                guard height >= 0.07 else { continue }
+
+                // Put the block where it is not sitting on a bathtub. The
+                // interior label point is the starting guess; if fixtures cover
+                // it, a clear spot inside the same room is used instead.
+                let anchor = labelAnchor(for: room, in: level, options: options)
+                let at = anchor.point
+
+                // Secondary lines in priority order: dimensions, then area.
+                // A line is only added when it also fits the room's width, so
+                // labels never spill across walls into the next room.
+                func fits(_ text: String, _ textHeight: Double) -> Bool {
+                    PlanTextMetrics.width(text, height: textHeight) <= maxWidth
+                }
+                var lines: [(text: String, height: Double, pen: PlanPen)] = [
+                    (name, height, .roomLabel)
+                ]
+                // Rough line capacity — limited by the room, and by how much
+                // clear floor the block actually has. A small bathroom is not
+                // improved by stacking three lines over its bathtub: the name
+                // and the size are what matter, and the rest is dropped.
+                let usable = min(across, anchor.clearance * 2 + height)
+                var budget = usable / (height * 1.6)
+                if options.showRoomDimensions, height >= 0.10, budget > 2.5,
+                   let extents = GeometryOps.orientedExtents(room.polygon) {
+                    // "W x D" only describes a room honestly when the room fills
+                    // its bounding box. For an L-shaped or irregular room the
+                    // same numbers are overall extents — labelled so nobody
+                    // multiplies them into an area the room does not have. If
+                    // the honest version does not fit, no version is drawn.
+                    let dims = options.formatter.roomDimensions(extents.width, extents.depth)
+                    let text = extents.fill >= 0.95 ? dims : dims + " overall"
+                    let dimsHeight = height * 0.78
+                    if fits(text, dimsHeight) {
+                        lines.append((text, dimsHeight, .areaLabel))
+                        budget -= 1
+                    }
+                }
+                if options.showAreaLabels, height >= 0.11, budget > 2.5 {
+                    let text = options.formatter.area(room.floorArea)
+                    let areaHeight = height * 0.68
+                    if fits(text, areaHeight) {
+                        lines.append((text, areaHeight, .areaLabel))
+                        budget -= 1
+                    }
+                }
+                if options.showCeilingHeights, let ceiling = room.ceilingHeight,
+                   height >= 0.10, budget > 2.5 {
+                    let text = "Ceiling \(options.formatter.roomDimension(ceiling))"
+                    let ceilingHeight = height * 0.68
+                    if fits(text, ceilingHeight) {
+                        lines.append((text, ceilingHeight, .areaLabel))
+                    }
+                }
+
+                // Stack the block centered on the label point. A turned block
+                // stacks across the room's width instead of its height, and
+                // reads bottom-to-top so it is never upside down.
+                let spacing = 1.45
+                let totalHeight = lines.reduce(0.0) { $0 + $1.height * spacing }
+                var offset = totalHeight / 2
+                for line in lines {
+                    offset -= line.height * spacing / 2
+                    let position = turned
+                        ? Vec2(at.x - offset, at.y)
+                        : Vec2(at.x, at.y + offset)
+                    add(.text(
+                        string: line.text,
+                        position: position,
+                        height: line.height,
+                        rotation: turned ? .pi / 2 : 0,
+                        anchor: .center,
+                        pen: line.pen
+                    ), to: .labels)
+                    offset -= line.height * spacing / 2
+                }
+            }
+        }
+
+        // ---- Annotations ----
+        if options.showAnnotations {
+            for annotation in level.annotations {
+                switch annotation.kind {
+                case .note:
+                    add(.circle(center: annotation.position, radius: 0.05, pen: .annotation, filled: true), to: .annotations)
+                    add(.text(
+                        string: annotation.text,
+                        position: annotation.position + Vec2(0.12, 0.12),
+                        height: options.dimensionTextHeight,
+                        rotation: 0,
+                        anchor: .leftCenter,
+                        pen: .annotation
+                    ), to: .annotations)
+                case .dimension:
+                    if let a = annotation.pointA, let b = annotation.pointB {
+                        let text = annotation.text.isEmpty
+                            ? options.formatter.length(a.distance(to: b))
+                            : annotation.text
+                        emitDimension(from: a, to: b, offset: annotation.offset, text: text,
+                                      textHeight: options.dimensionTextHeight) { add($0, to: .annotations) }
+                    }
+                }
+            }
+        }
+
+        // ---- Photo markers ----
+        for marker in options.photoMarkers {
+            emitPhotoMarker(marker) { add($0, to: .photos) }
+        }
+
+        // ---- Bounds ----
+        var bounds = level.bounds
+        if bounds.isNull { bounds = Rect2(minX: 0, minY: 0, maxX: 1, maxY: 1) }
+        bounds = bounds.expanded(by: options.showDimensions ? options.dimensionOffset * 2.1 + 0.7 : 0.6)
+
+        // ---- Scale bar & north arrow ----
+        if options.showScaleBar {
+            emitScaleBar(at: Vec2(bounds.minX + 0.3, bounds.minY + 0.25),
+                         formatter: options.formatter,
+                         textHeight: options.dimensionTextHeight) { add($0, to: .decor) }
+        }
+        if options.showNorthArrow, let north = level.northAngle {
+            emitNorthArrow(at: Vec2(bounds.maxX - 0.6, bounds.maxY - 0.6), angle: north,
+                           textHeight: options.dimensionTextHeight) { add($0, to: .decor) }
+        }
+
+        // ---- Title block (below the plan, never over it) ----
+        if let block = options.titleBlock, !block.isEmpty {
+            bounds = emitTitleBlock(block, planBounds: bounds) { add($0, to: .decor) }
+        }
+
+        let orderedKinds: [PlanLayerKind] = [
+            .roomFills, .findings, .furniture, .fixtures, .walls, .demolition, .newConstruction,
+            .openings, .dimensions, .labels, .annotations, .photos, .decor,
+        ]
+        let planLayers = orderedKinds.compactMap { kind -> PlanLayer? in
+            guard let prims = layers[kind], !prims.isEmpty else { return nil }
+            return PlanLayer(kind: kind, primitives: prims)
+        }
+        return PlanScene(layers: planLayers, bounds: bounds, levelName: level.name)
+    }
+
+    /// Routes wall-body primitives to .walls and opening symbols to .openings.
+    private static func primitiveLayer(for primitive: PlanPrimitive, default kind: PlanLayerKind) -> PlanLayerKind {
+        switch primitive {
+        case .arc, .circle:
+            return .openings
+        case .line(_, _, let pen):
+            switch pen {
+            case .doorLeaf, .doorSwing, .windowGlazing, .openingJamb, .openingHead:
+                return .openings
+            default:
+                return kind
+            }
+        default:
+            return kind
+        }
+    }
+
+    // MARK: - Room label placement
+
+    /// Whether a room's label has to be turned to read bottom-to-top.
+    ///
+    /// Only when both are true: the room is clearly taller than it is wide,
+    /// and the name genuinely will not fit across it at a legible size. A room
+    /// that can hold its label horizontally always gets it horizontally —
+    /// sideways text on a plan that did not need it is just harder to read.
+    static func shouldTurnLabel(_ name: String, room: RoomShape, options: Options) -> Bool {
+        let bounds = room.bounds
+        // A room that is not clearly taller than it is wide never turns.
+        guard bounds.height > bounds.width * 1.35 else { return false }
+
+        // The block is as wide as its widest line, which is usually the size
+        // rather than the name — judging by the name alone turns rooms that
+        // then overrun anyway, and leaves flat ones that did not need it.
+        var widest = name
+        var widestScale = 1.0
+        if options.showRoomDimensions, let extents = GeometryOps.orientedExtents(room.polygon) {
+            let dims = options.formatter.roomDimensions(extents.width, extents.depth)
+            // Secondary lines are drawn at 0.78 of the name's height, so their
+            // demand on width is scaled to compare like with like.
+            if PlanTextMetrics.width(dims, height: 0.78) > PlanTextMetrics.width(widest, height: 1) {
+                widest = dims
+                widestScale = 0.78
+            }
+        }
+
+        func achievableHeight(along: Double, across: Double) -> Double {
+            let fitting = PlanTextMetrics.heightToFit(widest, maxWidth: max(along, 0.1) * 0.78)
+                .map { $0 / widestScale }
+            return min(options.labelTextHeight,
+                       max(across, 0.1) * 0.20,
+                       fitting ?? .greatestFiniteMagnitude)
+        }
+
+        let lying = achievableHeight(along: bounds.width, across: bounds.height)
+        let turned = achievableHeight(along: bounds.height, across: bounds.width)
+        // Turning has to buy a materially bigger label, not a rounding error.
+        return turned > lying * 1.35
+    }
+
+    /// Where a room's label block sits.
+    ///
+    /// The interior label point is the starting guess. When fixtures cover it —
+    /// a bath's tub and vanity leave very little clear floor — candidate points
+    /// inside the room are scored by how far they sit from the nearest fixture,
+    /// and the clearest one near the middle of the room wins. A label printed
+    /// over a bathtub is unreadable on the sheet and unusable on site.
+    static func labelAnchor(for room: RoomShape, in level: LevelGeometry, options: Options)
+        -> (point: Vec2, clearance: Double) {
+        let start = room.labelPoint
+        let openRoom = Double.greatestFiniteMagnitude
+
+        // Only things actually on the sheet move a label. A bed that is not
+        // drawn must not push the bedroom's name into a wall.
+        let obstacles: [[Vec2]] = level.fixtures.compactMap { fixture in
+            let isFurniture = fixture.category.isFurniture
+            guard isFurniture ? options.showFurniture : options.showFixtures else { return nil }
+            guard includeElement(fixture.changeStatus, mode: options.mode) else { return nil }
+            let corners = fixture.corners
+            guard corners.count >= 3 else { return nil }
+            let inRoom = fixture.roomID == room.id
+                || GeometryOps.polygonContains(room.polygon, fixture.center)
+            return inRoom ? corners : nil
+        }
+        guard !obstacles.isEmpty else { return (start, openRoom) }
+
+        func clearance(_ point: Vec2) -> Double {
+            var nearest = Double.greatestFiniteMagnitude
+            for corners in obstacles {
+                let distance = GeometryOps.polygonContains(corners, point)
+                    ? 0
+                    : GeometryOps.distanceToPolygonBoundary(corners, point)
+                nearest = min(nearest, distance)
+            }
+            return nearest
+        }
+
+        // Good enough where it is: half a metre of clear floor around the point.
+        let startClearance = clearance(start)
+        if startClearance >= 0.5 { return (start, startClearance) }
+
+        // Otherwise search the room on a fixed grid — deterministic, so the
+        // same plan always draws the same way.
+        let bounds = room.bounds
+        var best = start
+        var bestScore = startClearance
+        let steps = 8
+        for i in 1..<steps {
+            for j in 1..<steps {
+                let candidate = Vec2(
+                    bounds.minX + bounds.width * Double(i) / Double(steps),
+                    bounds.minY + bounds.height * Double(j) / Double(steps))
+                guard GeometryOps.polygonContains(room.polygon, candidate) else { continue }
+                // Prefer clear floor, then the middle of the room, so the label
+                // does not drift into a corner when several spots are equal.
+                let pull = candidate.distance(to: bounds.center) * 0.15
+                let score = min(clearance(candidate), 0.9) - pull
+                if score > bestScore {
+                    bestScore = score
+                    best = candidate
+                }
+            }
+        }
+        return (best, clearance(best))
+    }
+
+    // MARK: - Wall emission
+
+    /// Draws one wall as a filled double-line body with gaps at openings,
+    /// plus door/window/opening symbols.
+    static func emitWall(
+        _ wall: Wall,
+        pen: PlanPen,
+        fill: PlanFill,
+        mode: PlanRenderMode,
+        emit: (PlanPrimitive) -> Void
+    ) {
+        let dir = wall.direction
+        let perp = dir.perpendicular
+        let ht = wall.thickness / 2
+        let len = wall.length
+
+        // Openings visible in this mode, sorted, clamped inside the wall.
+        let openings = wall.openings
+            .filter { includeElement($0.changeStatus, mode: mode) }
+            .map { o -> WallOpening in
+                var c = o
+                c.centerOffset = min(max(o.centerOffset, o.width / 2), max(o.width / 2, len - o.width / 2))
+                return c
+            }
+            .sorted { $0.startOffset < $1.startOffset }
+
+        // Solid wall segments between openings.
+        var segments: [(Double, Double)] = []
+        var cursor = 0.0
+        for o in openings {
+            let s = max(0, o.startOffset)
+            let e = min(len, o.endOffset)
+            if s > cursor + 0.005 { segments.append((cursor, s)) }
+            cursor = max(cursor, e)
+        }
+        if cursor < len - 0.005 { segments.append((cursor, len)) }
+        if segments.isEmpty && openings.isEmpty { segments = [(0, len)] }
+
+        // Extend outermost segment ends by half thickness so corners close.
+        for (i, seg) in segments.enumerated() {
+            var s = seg.0
+            var e = seg.1
+            if i == 0 && s <= 0.005 { s -= ht }
+            if i == segments.count - 1 && e >= len - 0.005 { e += ht }
+            let p1 = wall.start + dir * s
+            let p2 = wall.start + dir * e
+            let corners = [p1 + perp * ht, p2 + perp * ht, p2 - perp * ht, p1 - perp * ht]
+            emit(.polygon(points: corners, fill: fill, outline: pen))
+        }
+
+        // Opening symbols.
+        for o in openings {
+            let s = max(0, o.startOffset)
+            let e = min(len, o.endOffset)
+            let pStart = wall.start + dir * s
+            let pEnd = wall.start + dir * e
+            let openingPen: PlanPen = o.changeStatus == .demolish && (mode == .demolition || mode == .overlay)
+                ? .wallDemolished
+                : .openingJamb
+
+            // Jamb lines across the wall thickness.
+            emit(.line(a: pStart + perp * ht, b: pStart - perp * ht, pen: openingPen))
+            emit(.line(a: pEnd + perp * ht, b: pEnd - perp * ht, pen: openingPen))
+
+            switch o.kind {
+            case .door:
+                let swing = o.swing ?? DoorSwing()
+                let side = swing.opensPositiveSide ? perp : -perp
+                let width = e - s
+                let demolished = o.changeStatus == .demolish && (mode == .demolition || mode == .overlay)
+                let leafPen: PlanPen = demolished ? .wallDemolished : .doorLeaf
+                let arcPen: PlanPen = demolished ? .wallDemolished : .doorSwing
+                let hiddenPen: PlanPen = demolished ? .wallDemolished : .openingHead
+
+                // Leaf and swing arc from a hinge point, the way every
+                // hinged door is drawn.
+                func hingedLeaf(at hinge: Vec2, toward leafDir: Vec2, length: Double) {
+                    let leafEnd = hinge + side * length
+                    emit(.line(a: hinge, b: leafEnd, pen: leafPen))
+                    let (startA, endA) = shortestArc(from: (leafEnd - hinge).angle, to: (leafDir * length).angle)
+                    emit(.arc(center: hinge, radius: length, startAngle: startA, endAngle: endA, pen: arcPen))
+                }
+
+                switch o.resolvedStyle {
+                case .hinged:
+                    hingedLeaf(at: swing.hingeAtStart ? pStart : pEnd,
+                               toward: swing.hingeAtStart ? dir : -dir, length: width)
+                case .doubleHinged:
+                    // A leaf on each jamb, meeting in the middle.
+                    hingedLeaf(at: pStart, toward: dir, length: width / 2)
+                    hingedLeaf(at: pEnd, toward: -dir, length: width / 2)
+                case .sliding:
+                    // Two panels on separate tracks, overlapping at the centre,
+                    // each drawn as a thin slab so it reads inside the jambs.
+                    let panel = width * 0.55
+                    let near = perp * (ht * 0.12)
+                    let far = perp * (ht * 0.55)
+                    emit(.polyline(points: [pStart + near, pStart + dir * panel + near,
+                                            pStart + dir * panel + far, pStart + far],
+                                   closed: true, pen: leafPen))
+                    emit(.polyline(points: [pEnd - near, pEnd - dir * panel - near,
+                                            pEnd - dir * panel - far, pEnd - far],
+                                   closed: true, pen: leafPen))
+                    emit(.line(a: pStart, b: pEnd, pen: arcPen))
+                case .pocket:
+                    // One panel showing in the opening; its pocket drawn hidden
+                    // inside the wall beyond the jamb it slides toward.
+                    let jamb = swing.hingeAtStart ? pStart : pEnd
+                    let into = swing.hingeAtStart ? dir : -dir      // into the opening
+                    emit(.line(a: jamb, b: jamb + into * (width * 0.35), pen: leafPen))
+                    emit(.line(a: jamb, b: jamb - into * width, pen: hiddenPen))
+                    emit(.line(a: jamb - into * width + perp * ht * 0.5,
+                               b: jamb - into * width - perp * ht * 0.5, pen: hiddenPen))
+                case .bifold:
+                    // Two folding pairs, one from each jamb, standing on the
+                    // swing side.
+                    let quarter = width / 4
+                    let mid = pStart + dir * (width / 2)
+                    let fold = side * (quarter * 0.9)
+                    emit(.polyline(points: [pStart, pStart + dir * quarter + fold, mid], closed: false, pen: leafPen))
+                    emit(.polyline(points: [pEnd, pEnd - dir * quarter + fold, mid], closed: false, pen: leafPen))
+                case .garage:
+                    // Overhead door: the panel in the opening, its raised
+                    // position hidden inside.
+                    emit(.line(a: pStart, b: pEnd, pen: leafPen))
+                    let inside = side * (ht + min(width * 0.9, 2.2))
+                    emit(.line(a: pStart + side * ht, b: pStart + inside, pen: hiddenPen))
+                    emit(.line(a: pEnd + side * ht, b: pEnd + inside, pen: hiddenPen))
+                    emit(.line(a: pStart + inside, b: pEnd + inside, pen: hiddenPen))
+                }
+            case .window:
+                let glazePen: PlanPen = o.changeStatus == .demolish && (mode == .demolition || mode == .overlay)
+                    ? .wallDemolished : .windowGlazing
+                emit(.line(a: pStart + perp * ht, b: pEnd + perp * ht, pen: glazePen))
+                emit(.line(a: pStart, b: pEnd, pen: glazePen))
+                emit(.line(a: pStart - perp * ht, b: pEnd - perp * ht, pen: glazePen))
+            case .opening:
+                emit(.line(a: pStart + perp * ht, b: pEnd + perp * ht, pen: .openingHead))
+                emit(.line(a: pStart - perp * ht, b: pEnd - perp * ht, pen: .openingHead))
+            }
+        }
+    }
+
+    /// Rounded-rectangle outline in a fixture's local frame, as a polyline —
+    /// enough segments to read as a curve at plan scale.
+    static func roundedRectangle(
+        halfWidth: Double, halfDepth: Double, radius: Double,
+        local: (Double, Double) -> Vec2
+    ) -> [Vec2] {
+        let r = min(radius, min(halfWidth, halfDepth) * 0.95)
+        let corners: [(Double, Double, Double)] = [
+            (halfWidth - r, halfDepth - r, 0),           // +x +y
+            (-halfWidth + r, halfDepth - r, .pi / 2),    // -x +y
+            (-halfWidth + r, -halfDepth + r, .pi),       // -x -y
+            (halfWidth - r, -halfDepth + r, 3 * .pi / 2), // +x -y
+        ]
+        var points: [Vec2] = []
+        for (cx, cy, startAngle) in corners {
+            for step in 0...4 {
+                let angle = startAngle + (.pi / 2) * Double(step) / 4
+                points.append(local(cx + r * cos(angle), cy + r * sin(angle)))
+            }
+        }
+        return points
+    }
+
+    /// Returns (start, end) covering the quarter-swing from a0 to a1 going the
+    /// short way, normalized so end > start for counter-clockwise arcs.
+    static func shortestArc(from a0: Double, to a1: Double) -> (Double, Double) {
+        var delta = GeometryAngle.normalize(a1 - a0)
+        if delta >= 0 {
+            return (a0, a0 + delta)
+        } else {
+            delta = -delta
+            return (a1, a1 + delta)
+        }
+    }
+
+    // MARK: - Fixture emission
+
+    static func emitFixture(_ fixture: FixtureItem, pen: PlanPen, emit: (PlanPrimitive) -> Void) {
+        let corners = fixture.corners
+        emit(.polygon(points: corners, fill: .fixtureFill, outline: pen))
+
+        let center = fixture.center
+        let rot = fixture.rotation
+        func local(_ x: Double, _ y: Double) -> Vec2 {
+            Vec2(x, y).rotated(by: rot) + center
+        }
+        let w = fixture.size.x
+        let d = fixture.size.y
+
+        // Fixture symbols follow the shapes a client recognises on a real estate
+        // plan: a tub with its rolled rim and tap, a toilet as tank plus bowl,
+        // a basin inside its counter. `local` places them in the fixture's own
+        // frame, so every symbol rotates with the fixture.
+        switch fixture.category {
+        case .toilet:
+            // Tank across the back, bowl in front of it.
+            let tankDepth = d * 0.26
+            emit(.polygon(points: [
+                local(-w * 0.34, -d / 2 + 0.01), local(w * 0.34, -d / 2 + 0.01),
+                local(w * 0.34, -d / 2 + tankDepth), local(-w * 0.34, -d / 2 + tankDepth),
+            ], fill: .none, outline: pen))
+            emit(.circle(center: local(0, d * 0.12), radius: min(w * 0.36, d * 0.30),
+                         pen: pen, filled: false))
+        case .sink, .vanity:
+            // Basin inset in the counter, tap at the back.
+            let basin = min(w, d) * 0.30
+            emit(.circle(center: local(0, d * 0.04), radius: basin, pen: pen, filled: false))
+            emit(.circle(center: local(0, -d * 0.30), radius: basin * 0.22, pen: pen, filled: true))
+            emit(.line(a: local(-basin * 0.28, -d * 0.30), b: local(basin * 0.28, -d * 0.30), pen: pen))
+        case .bathtub:
+            // Rolled rim: an inner tub outline with rounded ends, plus the tap.
+            emit(.polyline(points: roundedRectangle(
+                halfWidth: w * 0.40, halfDepth: d * 0.38,
+                radius: min(w, d) * 0.22, local: local), closed: true, pen: pen))
+            emit(.circle(center: local(0, -d * 0.30), radius: min(w, d) * 0.06,
+                         pen: pen, filled: false))
+        case .shower:
+            // Tray outline plus the drain and the diagonal that reads "shower".
+            emit(.polygon(points: [
+                local(-w * 0.40, -d * 0.40), local(w * 0.40, -d * 0.40),
+                local(w * 0.40, d * 0.40), local(-w * 0.40, d * 0.40),
+            ], fill: .none, outline: pen))
+            emit(.line(a: local(-w * 0.40, -d * 0.40), b: local(w * 0.40, d * 0.40), pen: pen))
+            emit(.circle(center: local(0, 0), radius: min(w, d) * 0.07, pen: pen, filled: false))
+        case .stove:
+            let bx = w * 0.22
+            let by = d * 0.20
+            for (sx, sy) in [(-bx, -by), (bx, -by), (-bx, by), (bx, by)] {
+                emit(.circle(center: local(sx, sy), radius: min(w, d) * 0.10, pen: pen, filled: false))
+            }
+            // Control panel strip at the back.
+            emit(.line(a: local(-w / 2, -d * 0.38), b: local(w / 2, -d * 0.38), pen: pen))
+        case .bed:
+            // Pillows across the head, coverlet fold across the foot.
+            let pillowDepth = d * 0.18
+            emit(.polygon(points: [
+                local(-w * 0.42, -d * 0.44), local(w * 0.42, -d * 0.44),
+                local(w * 0.42, -d * 0.44 + pillowDepth), local(-w * 0.42, -d * 0.44 + pillowDepth),
+            ], fill: .none, outline: pen))
+            emit(.line(a: local(0, -d * 0.44), b: local(0, -d * 0.44 + pillowDepth), pen: pen))
+            emit(.line(a: local(-w / 2, d * 0.16), b: local(w / 2, d * 0.16), pen: pen))
+        case .sofa:
+            // Back cushion along one long edge, arms at each end.
+            let back = d * 0.24
+            emit(.line(a: local(-w / 2, -d / 2 + back), b: local(w / 2, -d / 2 + back), pen: pen))
+            emit(.line(a: local(-w / 2 + w * 0.12, -d / 2 + back), b: local(-w / 2 + w * 0.12, d / 2), pen: pen))
+            emit(.line(a: local(w / 2 - w * 0.12, -d / 2 + back), b: local(w / 2 - w * 0.12, d / 2), pen: pen))
+        case .cabinetBase, .countertop, .island:
+            // Counter edge line, the way cabinet runs are drawn.
+            emit(.line(a: local(-w / 2, d * 0.34), b: local(w / 2, d * 0.34), pen: pen))
+        case .mirror:
+            // A double line against the wall, the drafting convention.
+            emit(.line(a: local(-w / 2, -d * 0.18), b: local(w / 2, -d * 0.18), pen: pen))
+            emit(.line(a: local(-w / 2, d * 0.18), b: local(w / 2, d * 0.18), pen: pen))
+        case .stairs:
+            // Tread lines across the depth, the walk line up the middle with
+            // its arrowhead at the top and "UP" at the foot. The fixture's
+            // front (+y) is the upper end; the editor flips it.
+            let treads = max(2, Int(d / 0.28))
+            for i in 1..<treads {
+                let y = -d / 2 + d * Double(i) / Double(treads)
+                emit(.line(a: local(-w / 2, y), b: local(w / 2, y), pen: pen))
+            }
+            let footY = -d / 2 + min(0.3, d * 0.25)
+            let headY = d / 2 - 0.05
+            emit(.circle(center: local(0, footY), radius: 0.035, pen: pen, filled: true))
+            emit(.line(a: local(0, footY), b: local(0, headY), pen: pen))
+            let arrow = min(0.18, w * 0.3)
+            emit(.line(a: local(0, headY), b: local(-arrow * 0.55, headY - arrow), pen: pen))
+            emit(.line(a: local(0, headY), b: local(arrow * 0.55, headY - arrow), pen: pen))
+            let textHeight = min(0.13, w * 0.28)
+            emit(.text(string: "UP", position: local(w * 0.28, footY + textHeight * 0.2),
+                       height: textHeight, rotation: rot, anchor: .center, pen: pen))
+        case .column:
+            emit(.polygon(points: corners, fill: .wallPoche, outline: pen))
+        case .refrigerator:
+            emit(.polygon(points: [
+                local(-w * 0.35, -d * 0.35), local(w * 0.35, -d * 0.35),
+                local(w * 0.35, d * 0.35), local(-w * 0.35, d * 0.35),
+            ], fill: .none, outline: pen))
+        default:
+            break
+        }
+    }
+
+    // MARK: - Findings and photo markers
+
+    /// A missing-space finding: hatched extent, dashed outline, a label and a
+    /// marker at the point to look at. Drawn in the warning pen so it is never
+    /// mistaken for geometry.
+    static func emitFinding(_ finding: SpaceFinding, emit: (PlanPrimitive) -> Void) {
+        if finding.region.count >= 3 {
+            emit(.polyline(points: finding.region, closed: true, pen: .finding))
+            let bounds = Rect2(containing: finding.region)
+            if finding.cells.isEmpty {
+                // Diagonal hatch across the rectangle.
+                let spacing = 0.3
+                let height = bounds.height
+                var c = bounds.minX - height
+                while c < bounds.maxX {
+                    // x = c + t·height, y = minY + t·height, t in [0,1], clipped to the rectangle.
+                    let t0 = max(0, (bounds.minX - c) / max(height, 1e-9))
+                    let t1 = min(1, (bounds.maxX - c) / max(height, 1e-9))
+                    if t1 > t0 {
+                        emit(.line(a: Vec2(c + t0 * height, bounds.minY + t0 * height),
+                                   b: Vec2(c + t1 * height, bounds.minY + t1 * height),
+                                   pen: .finding))
+                    }
+                    c += spacing
+                }
+            } else {
+                // One diagonal tick per raster cell, so the hatch follows the
+                // real shape of the void rather than its bounding box.
+                let area = max(finding.estimatedArea ?? 0, 1e-6)
+                let cell = (area / Double(finding.cells.count)).squareRoot()
+                let half = cell * 0.42
+                for center in finding.cells {
+                    emit(.line(a: center + Vec2(-half, -half), b: center + Vec2(half, half), pen: .finding))
+                }
+            }
+            let label = finding.kind == .footprintVoid ? "UNSCANNED?" : finding.kind.displayName.uppercased()
+            let textHeight = min(0.2, max(0.09, bounds.width * 0.1))
+            if PlanTextMetrics.width(label, height: textHeight) <= bounds.width * 0.95 {
+                emit(.text(string: label, position: bounds.center, height: textHeight,
+                           rotation: 0, anchor: .center, pen: .finding))
+            }
+        } else if finding.region.count == 2 {
+            emit(.line(a: finding.region[0], b: finding.region[1], pen: .finding))
+        }
+        emit(.circle(center: finding.location, radius: 0.12, pen: .finding, filled: false))
+        emit(.text(string: "!", position: finding.location, height: 0.16,
+                   rotation: 0, anchor: .center, pen: .finding))
+    }
+
+    /// A camera marker: circle with a view wedge in the direction the photo
+    /// looked, numbered so it pairs with the photo list.
+    static func emitPhotoMarker(_ marker: PlanPhotoMarker, emit: (PlanPrimitive) -> Void) {
+        let radius = 0.16
+        emit(.circle(center: marker.position, radius: radius, pen: .photoMarker, filled: false))
+        if let heading = marker.heading {
+            let spread = 0.42
+            let reach = 0.48
+            let a = marker.position + Vec2(cos(heading - spread), sin(heading - spread)) * reach
+            let b = marker.position + Vec2(cos(heading + spread), sin(heading + spread)) * reach
+            emit(.line(a: marker.position + Vec2(cos(heading - spread), sin(heading - spread)) * radius,
+                       b: a, pen: .photoMarker))
+            emit(.line(a: marker.position + Vec2(cos(heading + spread), sin(heading + spread)) * radius,
+                       b: b, pen: .photoMarker))
+            emit(.arc(center: marker.position, radius: reach,
+                      startAngle: heading - spread, endAngle: heading + spread, pen: .photoMarker))
+        }
+        emit(.text(string: marker.label, position: marker.position, height: radius * 1.15,
+                   rotation: 0, anchor: .center, pen: .photoMarker))
+    }
+
+    // MARK: - Dimensions
+
+    /// Dimensions the way a drafter reads them: each room's clear dimensions
+    /// face to face, inside the room; the footprint's outside-face lengths
+    /// where a side jogs; and the overall width and depth in an outer lane.
+    /// Nothing is measured along a centerline.
+    static func dimensionPrimitives(level: LevelGeometry, options: Options) -> [PlanPrimitive] {
+        var out: [PlanPrimitive] = []
+        let mode = options.mode
+        let minimumLength = options.minimumDimensionedWallLength
+        let textHeight = options.dimensionTextHeight
+
+        // Interior: room polygon edges, inside the room. A room whose label
+        // already states its size does not get them — the same numbers twice
+        // is what makes a plan look cluttered rather than measured. Rooms too
+        // small to hold a dimension clear of their label keep theirs in the
+        // W × D line, and a plain rectangle reads from that line too.
+        let labelCarriesSize = options.showRoomLabels && options.showRoomDimensions
+        let interiorMinimum = max(minimumLength, 1.0)
+        for room in level.rooms where !labelCarriesSize && includeElement(room.changeStatus, mode: mode) {
+            let polygon = GeometryOps.counterClockwise(room.polygon)
+            guard polygon.count >= 3, min(room.bounds.width, room.bounds.height) >= 2.0 else { continue }
+            switch options.interiorDimensions {
+            case .none: continue
+            case .jogsOnly where isRectangle(polygon): continue
+            default: break
+            }
+            let n = polygon.count
+            for i in 0..<n {
+                let a = polygon[i]
+                let b = polygon[(i + 1) % n]
+                let length = a.distance(to: b)
+                guard length >= interiorMinimum else { continue }
+                let inward = (b - a).normalized.perpendicular
+                let offset = options.dimensionOffset * 0.62
+                emitDimension(from: a, to: b,
+                              lineA: a + inward * offset, lineB: b + inward * offset,
+                              text: options.formatter.length(length),
+                              textHeight: textHeight) { out.append($0) }
+            }
+        }
+
+        // Exterior: the footprint's outside faces, then the overall extents.
+        let walls = level.walls.filter { includeElement($0.changeStatus, mode: mode) && $0.length > 0.02 }
+        guard walls.count >= 3 else { return out }
+        let planar = GeometryCleaner.splitAtJunctions(walls)
+        guard let boundary = WallGraph(walls: planar, tolerance: 0.1).exteriorBoundary(), boundary.count >= 3 else {
+            return out
+        }
+        let outside = GeometryCleaner.outsidePolygon(fromCenterlineLoop: boundary, walls: planar)
+        let bounds = Rect2(containing: outside)
+        let m = outside.count
+        // Whether a chain was drawn along the bottom or the right, so the
+        // overall can take the first lane when nothing is in it.
+        var chainBelow = false
+        var chainRight = false
+        for i in 0..<m {
+            let a = outside[i]
+            let b = outside[(i + 1) % m]
+            let length = a.distance(to: b)
+            guard length >= minimumLength else { continue }
+            // A face running the full width or depth of the footprint is
+            // already read from the overall extents below; only sides that
+            // jog need their pieces called out.
+            let spansWidth = abs(b.y - a.y) <= 0.02 && abs(b.x - a.x) >= bounds.width - 0.01
+            let spansDepth = abs(b.x - a.x) <= 0.02 && abs(b.y - a.y) >= bounds.height - 0.01
+            guard !spansWidth, !spansDepth else { continue }
+            let outward = (b - a).normalized.perpendicular * -1
+            let offset = options.dimensionOffset
+            if outward.y < -0.7, min(a.y, b.y) <= bounds.minY + 0.02 { chainBelow = true }
+            if outward.x > 0.7, max(a.x, b.x) >= bounds.maxX - 0.02 { chainRight = true }
+            emitDimension(from: a, to: b,
+                          lineA: a + outward * offset, lineB: b + outward * offset,
+                          text: options.formatter.length(length),
+                          textHeight: textHeight) { out.append($0) }
+        }
+
+        if bounds.width >= minimumLength {
+            let y = bounds.minY - options.dimensionOffset * (chainBelow ? 2.1 : 1.0)
+            emitDimension(from: Vec2(bounds.minX, bounds.minY), to: Vec2(bounds.maxX, bounds.minY),
+                          lineA: Vec2(bounds.minX, y), lineB: Vec2(bounds.maxX, y),
+                          text: options.formatter.length(bounds.width),
+                          textHeight: textHeight) { out.append($0) }
+        }
+        if bounds.height >= minimumLength {
+            let x = bounds.maxX + options.dimensionOffset * (chainRight ? 2.1 : 1.0)
+            emitDimension(from: Vec2(bounds.maxX, bounds.minY), to: Vec2(bounds.maxX, bounds.maxY),
+                          lineA: Vec2(x, bounds.minY), lineB: Vec2(x, bounds.maxY),
+                          text: options.formatter.length(bounds.height),
+                          textHeight: textHeight) { out.append($0) }
+        }
+        return out
+    }
+
+    /// Four corners, each within about 2° of square, at any rotation.
+    static func isRectangle(_ polygon: [Vec2]) -> Bool {
+        guard polygon.count == 4 else { return false }
+        for i in 0..<4 {
+            let e1 = polygon[(i + 1) % 4] - polygon[i]
+            let e2 = polygon[(i + 2) % 4] - polygon[(i + 1) % 4]
+            let l1 = e1.length, l2 = e2.length
+            guard l1 > 1e-9, l2 > 1e-9 else { return false }
+            if abs(e1.dot(e2)) > 0.035 * l1 * l2 { return false }
+        }
+        return true
+    }
+
+    /// Dimension with explicit measured points and dimension-line points.
+    static func emitDimension(
+        from measuredA: Vec2, to measuredB: Vec2,
+        lineA: Vec2, lineB: Vec2,
+        text: String, textHeight: Double,
+        emit: (PlanPrimitive) -> Void
+    ) {
+        // Extension lines from measured points to slightly past the dim line.
+        let extDir = (lineA - measuredA)
+        let extLen = extDir.length
+        let extUnit = extLen > 1e-9 ? extDir / extLen : Vec2(0, 1)
+        emit(.line(a: measuredA + extUnit * min(0.08, extLen), b: lineA + extUnit * 0.08, pen: .dimension))
+        emit(.line(a: measuredB + extUnit * min(0.08, extLen), b: lineB + extUnit * 0.08, pen: .dimension))
+        emit(.line(a: lineA, b: lineB, pen: .dimension))
+
+        // Architectural tick marks.
+        let axis = (lineB - lineA).normalized
+        let tick = (axis + extUnit).normalized * 0.09
+        emit(.line(a: lineA - tick, b: lineA + tick, pen: .dimension))
+        emit(.line(a: lineB - tick, b: lineB + tick, pen: .dimension))
+
+        // Text above the line, kept readable (never upside down).
+        var rotation = axis.angle
+        if rotation > .pi / 2 + 1e-9 || rotation < -.pi / 2 + 1e-9 {
+            rotation = GeometryAngle.normalize(rotation + .pi)
+        }
+        let mid = lineA.midpoint(lineB) + extUnit * (textHeight * 0.75)
+        emit(.text(string: text, position: mid, height: textHeight,
+                   rotation: rotation, anchor: .center, pen: .text))
+    }
+
+    /// Dimension between two points with a perpendicular offset.
+    static func emitDimension(
+        from a: Vec2, to b: Vec2, offset: Double,
+        text: String, textHeight: Double,
+        emit: (PlanPrimitive) -> Void
+    ) {
+        let perp = (b - a).normalized.perpendicular
+        emitDimension(from: a, to: b, lineA: a + perp * offset, lineB: b + perp * offset,
+                      text: text, textHeight: textHeight, emit: emit)
+    }
+
+    // MARK: - Decor
+
+    static func emitScaleBar(
+        at origin: Vec2,
+        formatter: UnitFormatter,
+        textHeight: Double,
+        emit: (PlanPrimitive) -> Void
+    ) {
+        // 0–10 ft (imperial) or 0–3 m (metric) alternating bar.
+        let imperial = formatter.system == .feetInches || formatter.system == .decimalFeet
+        let unitLen = imperial ? UnitConstants.metersPerFoot : 1.0
+        let segments = imperial ? 10 : 3
+        let tickHeight = 0.1
+        var x = origin
+        for i in 0..<segments {
+            let next = x + Vec2(unitLen, 0)
+            emit(.line(a: x, b: next, pen: .symbol))
+            if i % 2 == 0 {
+                // Filled block for alternating segments.
+                emit(.polygon(points: [
+                    x, next, next + Vec2(0, tickHeight * 0.6), x + Vec2(0, tickHeight * 0.6),
+                ], fill: .wallPoche, outline: nil))
+            }
+            x = next
+        }
+        emit(.line(a: origin, b: origin + Vec2(0, tickHeight), pen: .symbol))
+        emit(.line(a: origin + Vec2(unitLen * Double(segments), 0),
+                   b: origin + Vec2(unitLen * Double(segments), tickHeight), pen: .symbol))
+        let label = imperial ? "0        5'        10'" : "0     1m     2m     3m"
+        emit(.text(string: label,
+                   position: origin + Vec2(unitLen * Double(segments) / 2, tickHeight + textHeight),
+                   height: textHeight * 0.9, rotation: 0, anchor: .center, pen: .symbol))
+    }
+
+    /// Draws the sheet title block in a strip below the plan and returns the
+    /// bounds that now enclose both. Sizing is proportional to the plan so the
+    /// block reads the same whether the sheet is a closet or a whole floor.
+    static func emitTitleBlock(
+        _ block: PlanTitleBlock,
+        planBounds: Rect2,
+        emit: (PlanPrimitive) -> Void
+    ) -> Rect2 {
+        let width = planBounds.width
+        let textHeight = min(max(width * 0.020, 0.11), 0.34)
+        let titleHeight = textHeight * 1.35
+        let pad = textHeight * 1.1
+        let spacing = 1.85
+
+        func clean(_ s: String) -> String { s.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+        if block.style == .centered {
+            return emitCenteredTitleBlock(
+                block, planBounds: planBounds,
+                textHeight: textHeight, titleHeight: titleHeight,
+                pad: pad, spacing: spacing, clean: clean, emit: emit)
+        }
+
+        // Left column reads as the sheet's identity, right column as its facts.
+        typealias Row = (left: String, right: String, height: Double, leftPen: PlanPen, rightPen: PlanPen)
+        var rows: [Row] = [
+            (clean(block.projectName).uppercased(), clean(block.totalArea), titleHeight, .roomLabel, .roomLabel),
+            (clean(block.address), clean(block.dateText), textHeight, .text, .text),
+            (clean(block.planTitle), clean(block.preparedBy), textHeight, .text, .text),
+            (clean(block.note), clean(block.contact), textHeight * 0.92, .annotation, .text),
+        ]
+        rows.removeAll { $0.left.isEmpty && $0.right.isEmpty }
+        guard !rows.isEmpty else { return planBounds }
+
+        let blockHeight = pad * 2 + rows.reduce(0.0) { $0 + $1.height * spacing }
+        let top = planBounds.minY
+        let bottom = top - blockHeight
+        let dividerX = planBounds.minX + width * 0.62
+        let leftColumn = dividerX - planBounds.minX - pad * 2
+        let rightColumn = planBounds.maxX - dividerX - pad * 2
+
+        emit(.polyline(points: [
+            Vec2(planBounds.minX, bottom), Vec2(planBounds.maxX, bottom),
+            Vec2(planBounds.maxX, top), Vec2(planBounds.minX, top),
+        ], closed: true, pen: .symbol))
+        emit(.line(a: Vec2(dividerX, bottom), b: Vec2(dividerX, top), pen: .symbol))
+
+        // A long company or address line shrinks to its column rather than
+        // running through the divider and out over the border.
+        func fitted(_ text: String, _ height: Double, column: Double) -> Double {
+            guard column > 0,
+                  PlanTextMetrics.width(text, height: height) > column,
+                  let fitting = PlanTextMetrics.heightToFit(text, maxWidth: column)
+            else { return height }
+            return max(fitting, height * 0.55)
+        }
+
+        var y = top - pad
+        for row in rows {
+            y -= row.height * spacing / 2
+            if !row.left.isEmpty {
+                emit(.text(string: row.left, position: Vec2(planBounds.minX + pad, y),
+                           height: fitted(row.left, row.height, column: leftColumn),
+                           rotation: 0, anchor: .leftCenter, pen: row.leftPen))
+            }
+            if !row.right.isEmpty {
+                emit(.text(string: row.right, position: Vec2(dividerX + pad, y),
+                           height: fitted(row.right, row.height, column: rightColumn),
+                           rotation: 0, anchor: .leftCenter, pen: row.rightPen))
+            }
+            y -= row.height * spacing / 2
+        }
+
+        return Rect2(minX: planBounds.minX, minY: bottom,
+                     maxX: planBounds.maxX, maxY: planBounds.maxY)
+    }
+
+    /// Centered, borderless block: who prepared the plan, then the area totals.
+    /// The layout a client sees under a marketing floor plan.
+    private static func emitCenteredTitleBlock(
+        _ block: PlanTitleBlock,
+        planBounds: Rect2,
+        textHeight: Double,
+        titleHeight: Double,
+        pad: Double,
+        spacing: Double,
+        clean: (String) -> String,
+        emit: (PlanPrimitive) -> Void
+    ) -> Rect2 {
+        var rows: [(text: String, height: Double, pen: PlanPen)] = []
+        let heading = clean(block.preparedBy).isEmpty ? clean(block.projectName) : clean(block.preparedBy)
+        if !heading.isEmpty { rows.append((heading, titleHeight, .roomLabel)) }
+        for line in block.summaryLines where !clean(line).isEmpty {
+            rows.append((clean(line), textHeight, .roomLabel))
+        }
+        let address = clean(block.address)
+        if !address.isEmpty { rows.append((address, textHeight * 0.95, .text)) }
+        let note = clean(block.note)
+        if !note.isEmpty { rows.append((note, textHeight * 0.9, .annotation)) }
+        guard !rows.isEmpty else { return planBounds }
+
+        let blockHeight = pad + rows.reduce(0.0) { $0 + $1.height * spacing }
+        let centerX = planBounds.center.x
+        var y = planBounds.minY - pad
+        for row in rows {
+            y -= row.height * spacing / 2
+            emit(.text(string: row.text, position: Vec2(centerX, y), height: row.height,
+                       rotation: 0, anchor: .center, pen: row.pen))
+            y -= row.height * spacing / 2
+        }
+        return Rect2(minX: planBounds.minX, minY: planBounds.minY - blockHeight,
+                     maxX: planBounds.maxX, maxY: planBounds.maxY)
+    }
+
+    static func emitNorthArrow(
+        at center: Vec2, angle: Double, textHeight: Double,
+        emit: (PlanPrimitive) -> Void
+    ) {
+        let radius = 0.35
+        emit(.circle(center: center, radius: radius, pen: .symbol, filled: false))
+        let tip = center + Vec2(0, radius * 0.8).rotated(by: angle)
+        let baseL = center + Vec2(-radius * 0.25, -radius * 0.3).rotated(by: angle)
+        let baseR = center + Vec2(radius * 0.25, -radius * 0.3).rotated(by: angle)
+        emit(.polygon(points: [tip, baseL, baseR], fill: .wallPoche, outline: nil))
+        emit(.text(string: "N", position: center + Vec2(0, radius + textHeight).rotated(by: angle),
+                   height: textHeight, rotation: 0, anchor: .center, pen: .symbol))
+    }
+}
