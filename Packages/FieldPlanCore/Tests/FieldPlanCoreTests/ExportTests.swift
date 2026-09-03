@@ -195,7 +195,7 @@ final class ExporterTests: XCTestCase {
         XCTAssertTrue(svg.contains("</svg>"))
         XCTAssertTrue(svg.contains("<polygon"))   // wall bodies stay vector
         XCTAssertTrue(svg.contains("<text"))      // labels are text, not paths
-        XCTAssertTrue(svg.contains("BEDROOM"))
+        XCTAssertTrue(svg.contains("Bedroom"))
         XCTAssertTrue(svg.contains("id=\"walls\""))
         XCTAssertTrue(svg.contains("id=\"dimensions\""))
         // No raster imagery.
@@ -254,7 +254,7 @@ final class ExporterTests: XCTestCase {
 
         XCTAssertTrue(dxf.allSatisfy(\.isASCII),
                       "non-ASCII in DXF: \(dxf.filter { !$0.isASCII })")
-        XCTAssertTrue(dxf.contains("15' 0\" x 12' 0\""), "room dimensions should fold × to x")
+        XCTAssertTrue(dxf.contains("15'0\" x 12'0\""), "room dimensions reach DXF unchanged")
         XCTAssertTrue(dxf.contains("CAFE RENOVACION")) // title block sets the name in caps
         XCTAssertTrue(dxf.contains("Jerry's Renovations"))
         XCTAssertTrue(dxf.contains("Existing Conditions - Level 1"))

@@ -43,7 +43,7 @@ public enum SVGExporter {
             case .wallPoche: return "#1A1A1A"
             case .wallNewPoche: return "#8A8A8A"
             case .fixtureFill: return "#F2F2F2"
-            case .roomTint(let type): return type.planTint.hex
+            case .roomTint(let color): return color.hex
             case .none: return nil
             }
         }

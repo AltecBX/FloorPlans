@@ -2,6 +2,55 @@
 
 _Last updated: 2026-09-03_
 
+## 2026-09-03 — Build 16 (version 1.6): the plan reads like a floor plan
+
+Styling pass against five reference sheets the owner supplied. The geometry
+is untouched — this is entirely how the same measurements are presented.
+
+- **Room names as written** (`RoomNameStyle`), not forced to uppercase.
+  "Primary Bedroom", the way a listing sheet sets it. `.uppercase` remains
+  for a drawing issued to a trade.
+- **The size line in the tight form** (`UnitFormatter.roomDimensions`):
+  `14'0" x 12'5"`, whole inches, a lowercase x, no space inside the feet —
+  and `4.28 m x 3.79 m` in metric. An eighth of an inch is noise on a room
+  label; the room's real measurement stays in the model.
+- **Listing palette** (`RoomPalette.staging`, now the default): bedrooms
+  warm, bath and laundry cool, outdoor green, garage and utility grey, and
+  everything a person lives in — living, dining, kitchen, hall — one quiet
+  cream. Colouring a kitchen differently from the dining room beside it
+  makes an open plan look partitioned. `.byCategory` keeps the old
+  per-type colouring for working on the plan.
+- **The generator resolves the colour** (`PlanFill.roomTint(PlanColor)`
+  instead of `.roomTint(RoomType)`), so a room can never be tinted one way
+  on screen and another in the exported sheet.
+- **Labels sit on clear floor** (`PlanGenerator.labelAnchor`). A room's
+  label used to be drawn over its own bathtub and vanity. It now starts at
+  the interior label point and, when fixtures cover it, searches the room
+  on a fixed grid for the clearest spot near the middle. Only things
+  actually drawn move a label — an undrawn bed used to shove the bedroom's
+  name into a wall.
+- **A crowded room drops lines rather than stacking over fixtures**: the
+  line budget is limited by the clear floor around the anchor, not just by
+  the room's size, so a small bathroom prints its name and its size and
+  stops.
+- **Sideways only as a last resort** (`shouldTurnLabel`). A room clearly
+  taller than wide, whose block cannot be read across it at a useful size,
+  turns to read bottom-to-top — judged on the widest line (usually the size,
+  not the name), and only when turning buys a materially bigger label. Every
+  room in the sample apartment stays horizontal.
+- **Whole square feet under the drawing** (`UnitFormatter.sheetArea`,
+  `PlanAreaSummary`): "Measured Floor Area: 1,455 sq ft" with each floor
+  listed under it, lowest first. The takeoff keeps its tenth of a foot;
+  only the sheet rounds. There is deliberately no "excluded areas" line —
+  deciding what counts is what ANSI Z765 is for, and FieldPlan implements
+  none of it, so printing an exclusion it did not compute would be the same
+  unfounded claim as calling the figure GLA.
+- Core suite: **306 tests**, all passing on Linux (`PlanStyleTests`,
+  `PlanAreaSummaryTests` added). Every app file parses. Rendered and
+  inspected against the reference sheets before and after.
+- **Not verified here:** as ever, the iOS target cannot be compiled in this
+  environment. The Xcode build must be confirmed on the owner's Mac.
+
 ## 2026-09-03 — Build 15 (version 1.5): field validation and recovery
 
 Not an accuracy build. This one makes a property visit hard to lose and

@@ -24,6 +24,10 @@ public enum PlanGenerator {
         public var showAnnotations = true
         /// Room colour coding by type (bedrooms warm, wet rooms cool).
         public var showRoomColors = true
+        /// Which colour scheme the room fills use.
+        public var roomPalette: RoomPalette = .staging
+        /// How room names are cased on the plan.
+        public var roomNameStyle: RoomNameStyle = .asEntered
         /// Off by default: a client-facing sheet reads the room dimensions off
         /// the labels, and a graphic scale is meaningless once the sheet is
         /// resized. Turn it on for a drawing issued to a trade.
@@ -61,6 +65,28 @@ public enum PlanGenerator {
         case jogsOnly
         case all
         case none
+    }
+
+    /// Room name casing. Names arrive already capitalised ("Primary
+    /// Bedroom"), which is how listing floor plans set them; uppercase is
+    /// there for a drawing issued to a trade.
+    public enum RoomNameStyle: String, Codable, Hashable, CaseIterable, Sendable {
+        case asEntered
+        case uppercase
+
+        public var displayName: String {
+            switch self {
+            case .asEntered: return "Title Case"
+            case .uppercase: return "UPPERCASE"
+            }
+        }
+
+        func apply(_ name: String) -> String {
+            switch self {
+            case .asEntered: return name
+            case .uppercase: return name.uppercased()
+            }
+        }
     }
 
     // MARK: - Element inclusion by mode
@@ -131,7 +157,9 @@ public enum PlanGenerator {
             for room in level.rooms {
                 guard includeElement(room.changeStatus, mode: mode) else { continue }
                 guard room.polygon.count >= 3 else { continue }
-                add(.polygon(points: room.polygon, fill: .roomTint(room.type), outline: nil),
+                add(.polygon(points: room.polygon,
+                             fill: .roomTint(options.roomPalette.tint(for: room.type)),
+                             outline: nil),
                     to: .roomFills)
             }
         }
@@ -192,22 +220,37 @@ public enum PlanGenerator {
             for room in level.rooms {
                 guard includeElement(room.changeStatus, mode: mode) else { continue }
                 guard room.polygon.count >= 3 else { continue }
-                let at = room.labelPoint
-                let name = room.name.uppercased()
+                let name = options.roomNameStyle.apply(room.name)
 
-                // Fit the label to the room: shrink until it fits the room's
-                // width with a visible margin from the walls, and never let a
-                // small room carry a label sized for a large one — otherwise a
-                // closet's name runs into its neighbour's and the two read as
-                // one word. Secondary lines are dropped for rooms too small to
-                // carry them.
+                // A label is laid out along the room's long axis. Almost every
+                // room is wider than it is tall, so almost every label is
+                // horizontal — but a tall narrow room (a galley bath, a walk-in)
+                // cannot carry a horizontal label without it crossing the wall
+                // into the room next door, so there the block is turned to read
+                // bottom-to-top. Turning is a last resort, never a style.
                 let bounds = room.bounds
-                let maxWidth = max(bounds.width, 0.1) * 0.82
-                var height = min(options.labelTextHeight, max(bounds.height, 0.1) * 0.20)
+                let turned = shouldTurnLabel(name, room: room, options: options)
+                // Along = the direction text runs; across = line stacking.
+                let along = max(turned ? bounds.height : bounds.width, 0.1)
+                let across = max(turned ? bounds.width : bounds.height, 0.1)
+
+                // Fit the label to the room: shrink until it fits with a visible
+                // margin from the walls, and never let a small room carry a
+                // label sized for a large one — otherwise a closet's name runs
+                // into its neighbour's and the two read as one word. Secondary
+                // lines are dropped for rooms too small to carry them.
+                let maxWidth = along * 0.78
+                var height = min(options.labelTextHeight, across * 0.20)
                 if let fitting = PlanTextMetrics.heightToFit(name, maxWidth: maxWidth) {
                     height = min(height, fitting)
                 }
                 guard height >= 0.07 else { continue }
+
+                // Put the block where it is not sitting on a bathtub. The
+                // interior label point is the starting guess; if fixtures cover
+                // it, a clear spot inside the same room is used instead.
+                let anchor = labelAnchor(for: room, in: level, options: options)
+                let at = anchor.point
 
                 // Secondary lines in priority order: dimensions, then area.
                 // A line is only added when it also fits the room's width, so
@@ -218,17 +261,22 @@ public enum PlanGenerator {
                 var lines: [(text: String, height: Double, pen: PlanPen)] = [
                     (name, height, .roomLabel)
                 ]
-                var budget = bounds.height / (height * 1.6) // rough line capacity
+                // Rough line capacity — limited by the room, and by how much
+                // clear floor the block actually has. A small bathroom is not
+                // improved by stacking three lines over its bathtub: the name
+                // and the size are what matter, and the rest is dropped.
+                let usable = min(across, anchor.clearance * 2 + height)
+                var budget = usable / (height * 1.6)
                 if options.showRoomDimensions, height >= 0.10, budget > 2.5,
                    let extents = GeometryOps.orientedExtents(room.polygon) {
-                    // "W × D" only describes a room honestly when the room fills
+                    // "W x D" only describes a room honestly when the room fills
                     // its bounding box. For an L-shaped or irregular room the
                     // same numbers are overall extents — labelled so nobody
                     // multiplies them into an area the room does not have. If
                     // the honest version does not fit, no version is drawn.
-                    let dims = "\(options.formatter.length(extents.width)) × \(options.formatter.length(extents.depth))"
+                    let dims = options.formatter.roomDimensions(extents.width, extents.depth)
                     let text = extents.fill >= 0.95 ? dims : dims + " overall"
-                    let dimsHeight = height * 0.75
+                    let dimsHeight = height * 0.78
                     if fits(text, dimsHeight) {
                         lines.append((text, dimsHeight, .areaLabel))
                         budget -= 1
@@ -244,28 +292,33 @@ public enum PlanGenerator {
                 }
                 if options.showCeilingHeights, let ceiling = room.ceilingHeight,
                    height >= 0.10, budget > 2.5 {
-                    let text = "CEILING \(options.formatter.length(ceiling))"
-                    let ceilingHeight = height * 0.62
+                    let text = "Ceiling \(options.formatter.roomDimension(ceiling))"
+                    let ceilingHeight = height * 0.68
                     if fits(text, ceilingHeight) {
                         lines.append((text, ceilingHeight, .areaLabel))
                     }
                 }
 
-                // Stack the block centered on the label point.
+                // Stack the block centered on the label point. A turned block
+                // stacks across the room's width instead of its height, and
+                // reads bottom-to-top so it is never upside down.
                 let spacing = 1.45
                 let totalHeight = lines.reduce(0.0) { $0 + $1.height * spacing }
-                var y = at.y + totalHeight / 2
+                var offset = totalHeight / 2
                 for line in lines {
-                    y -= line.height * spacing / 2
+                    offset -= line.height * spacing / 2
+                    let position = turned
+                        ? Vec2(at.x - offset, at.y)
+                        : Vec2(at.x, at.y + offset)
                     add(.text(
                         string: line.text,
-                        position: Vec2(at.x, y),
+                        position: position,
                         height: line.height,
-                        rotation: 0,
+                        rotation: turned ? .pi / 2 : 0,
                         anchor: .center,
                         pen: line.pen
                     ), to: .labels)
-                    y -= line.height * spacing / 2
+                    offset -= line.height * spacing / 2
                 }
             }
         }
@@ -348,6 +401,114 @@ public enum PlanGenerator {
         default:
             return kind
         }
+    }
+
+    // MARK: - Room label placement
+
+    /// Whether a room's label has to be turned to read bottom-to-top.
+    ///
+    /// Only when both are true: the room is clearly taller than it is wide,
+    /// and the name genuinely will not fit across it at a legible size. A room
+    /// that can hold its label horizontally always gets it horizontally —
+    /// sideways text on a plan that did not need it is just harder to read.
+    static func shouldTurnLabel(_ name: String, room: RoomShape, options: Options) -> Bool {
+        let bounds = room.bounds
+        // A room that is not clearly taller than it is wide never turns.
+        guard bounds.height > bounds.width * 1.35 else { return false }
+
+        // The block is as wide as its widest line, which is usually the size
+        // rather than the name — judging by the name alone turns rooms that
+        // then overrun anyway, and leaves flat ones that did not need it.
+        var widest = name
+        var widestScale = 1.0
+        if options.showRoomDimensions, let extents = GeometryOps.orientedExtents(room.polygon) {
+            let dims = options.formatter.roomDimensions(extents.width, extents.depth)
+            // Secondary lines are drawn at 0.78 of the name's height, so their
+            // demand on width is scaled to compare like with like.
+            if PlanTextMetrics.width(dims, height: 0.78) > PlanTextMetrics.width(widest, height: 1) {
+                widest = dims
+                widestScale = 0.78
+            }
+        }
+
+        func achievableHeight(along: Double, across: Double) -> Double {
+            let fitting = PlanTextMetrics.heightToFit(widest, maxWidth: max(along, 0.1) * 0.78)
+                .map { $0 / widestScale }
+            return min(options.labelTextHeight,
+                       max(across, 0.1) * 0.20,
+                       fitting ?? .greatestFiniteMagnitude)
+        }
+
+        let lying = achievableHeight(along: bounds.width, across: bounds.height)
+        let turned = achievableHeight(along: bounds.height, across: bounds.width)
+        // Turning has to buy a materially bigger label, not a rounding error.
+        return turned > lying * 1.35
+    }
+
+    /// Where a room's label block sits.
+    ///
+    /// The interior label point is the starting guess. When fixtures cover it —
+    /// a bath's tub and vanity leave very little clear floor — candidate points
+    /// inside the room are scored by how far they sit from the nearest fixture,
+    /// and the clearest one near the middle of the room wins. A label printed
+    /// over a bathtub is unreadable on the sheet and unusable on site.
+    static func labelAnchor(for room: RoomShape, in level: LevelGeometry, options: Options)
+        -> (point: Vec2, clearance: Double) {
+        let start = room.labelPoint
+        let openRoom = Double.greatestFiniteMagnitude
+
+        // Only things actually on the sheet move a label. A bed that is not
+        // drawn must not push the bedroom's name into a wall.
+        let obstacles: [[Vec2]] = level.fixtures.compactMap { fixture in
+            let isFurniture = fixture.category.isFurniture
+            guard isFurniture ? options.showFurniture : options.showFixtures else { return nil }
+            guard includeElement(fixture.changeStatus, mode: options.mode) else { return nil }
+            let corners = fixture.corners
+            guard corners.count >= 3 else { return nil }
+            let inRoom = fixture.roomID == room.id
+                || GeometryOps.polygonContains(room.polygon, fixture.center)
+            return inRoom ? corners : nil
+        }
+        guard !obstacles.isEmpty else { return (start, openRoom) }
+
+        func clearance(_ point: Vec2) -> Double {
+            var nearest = Double.greatestFiniteMagnitude
+            for corners in obstacles {
+                let distance = GeometryOps.polygonContains(corners, point)
+                    ? 0
+                    : GeometryOps.distanceToPolygonBoundary(corners, point)
+                nearest = min(nearest, distance)
+            }
+            return nearest
+        }
+
+        // Good enough where it is: half a metre of clear floor around the point.
+        let startClearance = clearance(start)
+        if startClearance >= 0.5 { return (start, startClearance) }
+
+        // Otherwise search the room on a fixed grid — deterministic, so the
+        // same plan always draws the same way.
+        let bounds = room.bounds
+        var best = start
+        var bestScore = startClearance
+        let steps = 8
+        for i in 1..<steps {
+            for j in 1..<steps {
+                let candidate = Vec2(
+                    bounds.minX + bounds.width * Double(i) / Double(steps),
+                    bounds.minY + bounds.height * Double(j) / Double(steps))
+                guard GeometryOps.polygonContains(room.polygon, candidate) else { continue }
+                // Prefer clear floor, then the middle of the room, so the label
+                // does not drift into a corner when several spots are equal.
+                let pull = candidate.distance(to: bounds.center) * 0.15
+                let score = min(clearance(candidate), 0.9) - pull
+                if score > bestScore {
+                    bestScore = score
+                    best = candidate
+                }
+            }
+        }
+        return (best, clearance(best))
     }
 
     // MARK: - Wall emission

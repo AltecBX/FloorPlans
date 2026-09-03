@@ -333,9 +333,12 @@ final class AutoLabelingTests: XCTestCase {
         let level = SampleFixtures.rectangularRoom(widthFeet: 12, depthFeet: 15, name: "Bedroom", type: .bedroom)
         let scene = PlanGenerator.scene(for: level)
         let labels = texts(in: scene, layer: .labels)
-        XCTAssertTrue(labels.contains { $0.contains("×") }, "\(labels)")
-        XCTAssertTrue(labels.contains { $0.contains("15' 0\"") && $0.contains("12' 0\"") }, "\(labels)")
-        // A rectangle really is W × D, so it carries no qualifier.
+        // The compact form a floor plan uses: whole inches, a lowercase x,
+        // no spaces inside the feet-and-inches.
+        XCTAssertTrue(labels.contains { $0 == "15'0\" x 12'0\"" }, "\(labels)")
+        // The name is set as entered, not shouted.
+        XCTAssertTrue(labels.contains("Bedroom"), "\(labels)")
+        // A rectangle really is W x D, so it carries no qualifier.
         XCTAssertFalse(labels.contains { $0.contains("overall") }, "\(labels)")
     }
 
@@ -354,14 +357,14 @@ final class AutoLabelingTests: XCTestCase {
     }
 
     func testIrregularRoomDimensionsAreLabelledOverall() {
-        // The pentagon's bounding box is 14' × 14' = 196 sq ft but the room is
-        // only 178 sq ft. Printing a bare "14' × 14'" next to "178 sq ft" would
+        // The pentagon's bounding box is 14' x 14' = 196 sq ft but the room is
+        // only 178 sq ft. Printing a bare "14' x 14'" next to "178 sq ft" would
         // invite the client to multiply and get a different answer, so the
         // extents must be qualified.
         let level = SampleFixtures.irregularRoom()
         let labels = texts(in: PlanGenerator.scene(for: level), layer: .labels)
-        XCTAssertTrue(labels.contains { $0.contains("×") && $0.hasSuffix("overall") }, "\(labels)")
-        XCTAssertFalse(labels.contains { $0.contains("×") && !$0.hasSuffix("overall") }, "\(labels)")
+        XCTAssertTrue(labels.contains { $0.contains(" x ") && $0.hasSuffix("overall") }, "\(labels)")
+        XCTAssertFalse(labels.contains { $0.contains(" x ") && !$0.hasSuffix("overall") }, "\(labels)")
     }
 
     func testRoomLabelLinesNeverExceedTheRoomWidth() {

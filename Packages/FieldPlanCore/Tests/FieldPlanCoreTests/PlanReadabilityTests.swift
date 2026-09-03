@@ -71,7 +71,7 @@ final class PlanReadabilityTests: XCTestCase {
         let scene = PlanGenerator.scene(for: level, options: options)
         let labels = texts(scene, .labels)
         let dims = texts(scene, .dimensions)
-        XCTAssertTrue(labels.contains { $0.contains("×") }, "the label states the size: \(labels)")
+        XCTAssertTrue(labels.contains { $0.contains(" x ") }, "the label states the size: \(labels)")
         // Only the overall extents outside the plan — no per-edge chain
         // repeating what the label already says.
         XCTAssertEqual(dims.count, 2, "\(dims)")
@@ -82,9 +82,10 @@ final class PlanReadabilityTests: XCTestCase {
         XCTAssertGreaterThan(texts(PlanGenerator.scene(for: level, options: options), .dimensions).count, 2)
     }
 
-    func testRoomLabelsAreAlwaysHorizontal() {
-        // Nothing in the plan may emit sideways room text; the app keeps it
-        // upright on screen too, however the plan is turned.
+    func testRoomLabelsAreHorizontalWhereverTheyFit() {
+        // Sideways text is harder to read, so a room that can hold its label
+        // lying down always gets it that way. Every room in the sample
+        // apartment can, so nothing here is turned.
         let level = SampleFixtures.apartment()
         var options = PlanGenerator.Options()
         options.showRoomLabels = true

@@ -69,6 +69,50 @@ public struct PlanColor: Codable, Hashable, Sendable {
     }
 }
 
+/// How rooms are coloured.
+///
+/// `staging` is the look of a listing floor plan: sleeping areas warm, wet
+/// areas cool, outdoor space green, and everything a person lives in — living,
+/// dining, kitchen, hall — one quiet cream, so the eye reads the *layout*
+/// rather than a colour key. `byCategory` gives each room type its own tint,
+/// which is louder but useful when you are working on the plan rather than
+/// showing it.
+public enum RoomPalette: String, Codable, CaseIterable, Sendable {
+    case staging
+    case byCategory
+
+    public var displayName: String {
+        switch self {
+        case .staging: return "Listing"
+        case .byCategory: return "By Room Type"
+        }
+    }
+
+    public func tint(for type: RoomType) -> PlanColor {
+        switch self {
+        case .byCategory:
+            return type.planTint
+        case .staging:
+            switch type {
+            case .bedroom:
+                return PlanColor(0.937, 0.827, 0.741)   // warm peach
+            case .bathroom, .powderRoom, .laundry:
+                return PlanColor(0.804, 0.886, 0.886)   // pale aqua
+            case .balcony, .terrace:
+                return PlanColor(0.851, 0.925, 0.851)   // outdoor green
+            case .garage, .basement, .mechanicalRoom, .utilityRoom:
+                return PlanColor(0.925, 0.925, 0.925)   // grey
+            default:
+                // Living, dining, kitchen, hall, foyer, closets, office and
+                // storage all share the cream. A floor plan that colours the
+                // kitchen differently from the dining room beside it makes an
+                // open plan look partitioned.
+                return PlanColor(0.961, 0.945, 0.929)
+            }
+        }
+    }
+}
+
 public extension RoomType {
     /// Room colour coding, in the muted register a client-facing plan uses:
     /// enough to tell the sleeping, wet and living areas apart at a glance,
@@ -104,7 +148,10 @@ public enum PlanFill: Codable, Hashable, Sendable {
     case wallPoche        // solid cut-wall fill
     case wallNewPoche     // new wall fill (rendered lighter / hatched)
     case fixtureFill      // very light fill
-    case roomTint(RoomType)   // room colour coding
+    /// Room colour coding. The generator resolves the palette so every
+    /// renderer paints the same colour — a room is never tinted one way on
+    /// screen and another in the exported sheet.
+    case roomTint(PlanColor)
     case none
 }
 

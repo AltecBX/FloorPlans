@@ -170,12 +170,8 @@ struct ExportScreen: View {
             .joined(separator: "  ·  ")
         let area = ProjectSummaryStats.compute(levels: [level]).totalFloorArea
         let allLevels = snapshot?.levels ?? [level]
-        let grossArea = ProjectSummaryStats.compute(levels: allLevels).totalFloorArea
         let formatter = settings.formatter
-        var summary = ["Measured Floor Area: \(formatter.area(grossArea))"]
-        if allLevels.count > 1 {
-            summary.append("\(level.name): \(formatter.area(area))")
-        }
+        let summary = PlanAreaSummary.lines(levels: allLevels, formatter: formatter)
         let date = meta.inspectionDate ?? meta.createdAt
         return PlanTitleBlock(
             style: .centered,
@@ -183,7 +179,7 @@ struct ExportScreen: View {
             projectName: meta.name,
             address: address,
             planTitle: "\(mode.displayName) — \(level.name)",
-            totalArea: settings.formatter.area(area),
+            totalArea: formatter.sheetArea(area),
             dateText: date.formatted(date: .abbreviated, time: .omitted),
             preparedBy: settings.companyName,
             contact: contact,

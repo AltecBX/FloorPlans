@@ -191,6 +191,28 @@ destructive on purpose: the point is to prove a scan cannot be lost.
     CSV: each row must carry the laser value and every method's answer in
     its own column.
 
+## Build 16 — how the plan reads
+
+46. **Room labels**: open a scanned plan. Each room shows its name as you
+    typed it (not SHOUTED) with its size under it as `13'0" x 12'0"`. Check
+    one room against the tape — the label rounds to the whole inch on
+    purpose; the exact measurement is still in Measure and in the CSVs.
+47. **Colours**: bedrooms should be warm peach, bathrooms and laundry cool
+    aqua, and the living room, kitchen, dining and hall all the same cream.
+    If the kitchen is a different colour from the dining room beside it,
+    the listing palette is not being used — tell me.
+48. **Labels and fixtures**: scan a bathroom with a tub, toilet and vanity.
+    The label must sit on clear floor, not across the tub, and a small
+    bathroom should print just its name and size rather than three lines.
+49. **Sideways labels**: scan a galley bath or a walk-in closet — something
+    much deeper than it is wide. Its label should turn to read bottom-to-top.
+    Every normally-shaped room must stay horizontal. Report any room that
+    turned when it did not need to.
+50. **Area under the sheet**: Export → Floor Plan PNG with the title block
+    on. It should read "Measured Floor Area: 560 sq ft" — a whole number,
+    no decimal — with each floor listed under it when you scanned more
+    than one.
+
 ## Known limitations to verify/accept
 
 - Rooms scanned in *separate* sessions do not share a coordinate space; they

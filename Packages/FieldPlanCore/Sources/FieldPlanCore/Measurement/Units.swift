@@ -79,6 +79,33 @@ public struct UnitFormatter: Sendable {
         length(meters)
     }
 
+    /// One side of a room-label size, in the tight form a floor plan uses:
+    /// `12'5"`, `3.79 m`. Imperial rounds to the whole inch on purpose — an
+    /// eighth on a room label is noise, and the room's real measurement lives
+    /// in the model, not in this string.
+    public func roomDimension(_ meters: Double) -> String {
+        guard meters.isFinite else { return "—" }
+        switch system {
+        case .feetInches:
+            let inches = Int((abs(meters) / UnitConstants.metersPerInch).rounded())
+            let sign = meters < 0 ? "-" : ""
+            return "\(sign)\(inches / 12)'\(inches % 12)\""
+        case .decimalFeet:
+            return String(format: "%.1f'", meters / UnitConstants.metersPerFoot)
+        case .meters:
+            return String(format: "%.2f m", meters)
+        case .centimeters:
+            return String(format: "%.0f cm", meters * 100)
+        }
+    }
+
+    /// A room label's size line: `14'0" x 12'5"`, `4.28 m x 3.79 m`.
+    /// The separator is a lowercase x, as drawn on floor plans, not a
+    /// multiplication sign — it reads at label size and every font has it.
+    public func roomDimensions(_ width: Double, _ depth: Double) -> String {
+        "\(roomDimension(width)) x \(roomDimension(depth))"
+    }
+
     // MARK: Area
 
     /// Formats an area in square meters, e.g. `142.5 sq ft`.
@@ -91,6 +118,31 @@ public struct UnitFormatter: Sendable {
         case .meters, .centimeters:
             return String(format: "%.2f m²", squareMeters)
         }
+    }
+
+    /// Area as it reads on a floor plan sheet: whole units, thousands
+    /// separated — `1,455 sq ft`. The tenth of a square foot that `area`
+    /// carries is right for a takeoff and wrong under a drawing.
+    public func sheetArea(_ squareMeters: Double) -> String {
+        guard squareMeters.isFinite else { return "—" }
+        let value: Double
+        let unit: String
+        switch system {
+        case .feetInches, .decimalFeet:
+            value = squareMeters / UnitConstants.squareMetersPerSquareFoot
+            unit = "sq ft"
+        case .meters, .centimeters:
+            value = squareMeters
+            unit = "m²"
+        }
+        let whole = Int(value.rounded())
+        var digits = String(abs(whole))
+        var grouped = ""
+        while digits.count > 3 {
+            grouped = "," + digits.suffix(3) + grouped
+            digits = String(digits.dropLast(3))
+        }
+        return "\(whole < 0 ? "-" : "")\(digits)\(grouped) \(unit)"
     }
 
     /// Linear-footage style value (trim, molding), e.g. `41.3 LF`.

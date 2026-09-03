@@ -314,6 +314,36 @@ linked by an explicit physical-element name (not by IDs, which change), and
 confidence calibration. `FieldValidationBundle` exports the lot with the
 heavy binaries referenced by path rather than copied.
 
+## How the plan is drawn (build 16)
+
+The sheet is styled to read like a listing floor plan, because that is what a
+client and a trade both recognise.
+
+- Room names are set as written; the size goes under them in the tight form
+  (`14'0" x 12'5"`, whole inches, lowercase x), from
+  `UnitFormatter.roomDimensions`.
+- `RoomPalette.staging` is the default: bedrooms warm, wet rooms cool,
+  outdoor green, garage and utility grey, everything else one cream so an
+  open plan does not look partitioned. The generator resolves the colour, so
+  screen and export always agree. `.byCategory` is the louder per-type
+  scheme for working on the plan.
+- Labels are placed on clear floor. `PlanGenerator.labelAnchor` starts at the
+  room's interior label point and, when drawn fixtures cover it, searches a
+  fixed grid for the clearest spot near the middle — deterministic, so the
+  same plan always draws the same way. Only fixtures that are actually drawn
+  count as obstacles.
+- The number of lines is limited by the clear floor around that anchor, so a
+  small bathroom prints its name and size rather than stacking a third line
+  over the tub.
+- A label turns to read bottom-to-top only when the room is clearly taller
+  than wide *and* the block cannot be read across it at a useful size, judged
+  on the widest line. Sideways text that was not necessary is just harder to
+  read.
+- `PlanAreaSummary` composes the block under the sheet: the measured total in
+  whole square feet, then each floor. It reports measured floor area and
+  nothing else — no "excluded areas" line, because FieldPlan implements no
+  standard that would decide what to exclude.
+
 ## Snapshot files and migration
 
 - `PlanSnapshot.schemaVersion` (nil = 1, current = 2). Version 2 means
