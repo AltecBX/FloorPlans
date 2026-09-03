@@ -197,7 +197,11 @@ public struct PlanTitleBlock: Codable, Hashable, Sendable {
     /// How the block is laid out under the plan.
     public var style: Style
     /// Area totals under the company name in `.centered` style, e.g.
-    /// "Total GLA: 547 sq ft" then "1st floor: 547 sq ft".
+    /// "Measured Floor Area: 547 sq ft" then "1st floor: 547 sq ft".
+    ///
+    /// Deliberately not labelled GLA: gross living area is a defined term
+    /// with rules (ANSI Z765) about what counts, and FieldPlan applies none
+    /// of them. It reports the floor area it measured.
     public var summaryLines: [String]
     /// Property / project name — the largest line.
     public var projectName: String

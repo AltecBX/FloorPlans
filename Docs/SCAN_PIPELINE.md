@@ -259,6 +259,61 @@ Everything below reads the canonical model; nothing re-measures.
   filtering is the plan's (`PlanGenerator.includeElement`). The MTL carries
   flat colours; both files ship zipped.
 
+## Session ownership and recovery (build 15)
+
+FieldPlan creates the `ARSession` and hands it to RoomPlan through
+`RoomCaptureView(frame:arSession:)`. Everything — mesh anchors, camera
+poses and intrinsics, keyframes, depth, light estimates, tracking and world
+mapping state — arrives on one session the app controls. `SpatialSession`
+owns it; `ScanRecorder` is its delegate and feeds tracking and mapping state
+back. RoomPlan may still install its own delegate when it configures the
+session, so the recorder re-attaches behind it after three seconds if no
+frame has arrived, and records a `delegateReattached` event when it does.
+
+**A room is safe the moment it is accepted.** Accept writes the raw
+`CapturedRoom` JSON, the USDZ and a `RoomCheckpoint` before anything else.
+Everything is keyed by `CapturedRoom.identifier`:
+
+- `CheckpointStore.merge` folds a re-accepted or reprocessed room onto its
+  existing record instead of adding a second one, and never loses a merge
+  stamp to an older replay.
+- `CheckpointStore.outstanding` is what Finish Level imports — read back
+  from disk, not from memory, so a walk interrupted an hour ago is folded in
+  and a room already merged is skipped.
+- A checkpoint whose raw file will not decode is *reported*, never skipped
+  silently. A room that cannot be recovered is something to know about while
+  still at the property.
+
+**World maps.** A map is checkpointed after each accepted room and on
+interruption, but only from `mapped` or `extending` state, and never over a
+better one (`WorldMapPolicy`). An origin `ARAnchor` is planted before saving.
+
+**Resuming.** `initialWorldMap` is set and relocalization is awaited. Apple
+does not document whether that map survives RoomPlan re-running the session
+with its own configuration, so the app does not assume: it compares the
+origin anchor's translation after the restore against the one saved, and
+treats more than 10 cm of movement as a different coordinate space. A failed
+verification never merges — it offers a separate session to be registered
+later. `Docs/DEVICE_TESTING.md` item 32 is what settles the device behaviour.
+
+**Storage.** The recorder measures its own session directory at each
+30-second checkpoint and converts free space into minutes of recording left
+at the observed rate, holding back a 500 MB reserve. Below 15 minutes it
+warns, below 4 it is critical; with no rate yet it claims nothing.
+
+## Validation dataset (build 15)
+
+Ground truth is evidence recorded beside the plan, never an edit to it. One
+`ValidationSample` holds every method's answer for one element —
+`canonical`, `roomPlan`, `meshFit` (with its residual and inlier count),
+`originalScanned`, `userEdited` — beside the laser or tape value. A method
+with no answer is absent, not zero, and nothing is averaged or arbitrated.
+`ValidationAnalysis` reports mean absolute error per method, head-to-head
+counts over elements both methods measured, repeatability across rescans
+linked by an explicit physical-element name (not by IDs, which change), and
+confidence calibration. `FieldValidationBundle` exports the lot with the
+heavy binaries referenced by path rather than copied.
+
 ## Snapshot files and migration
 
 - `PlanSnapshot.schemaVersion` (nil = 1, current = 2). Version 2 means

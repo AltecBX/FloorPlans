@@ -51,6 +51,15 @@ struct SettingsScreen: View {
                     Toggle("Record sensor data during scans", isOn: Binding(
                         get: { settings.recordSensorData },
                         set: { settings.recordSensorData = $0 }))
+                        .disabled(settings.fieldValidationMode)
+                    if settings.sensorRecordingIsForced {
+                        Text("Field validation mode is on, so sensor recording stays on. Turn validation mode off to change this.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Toggle("Field validation mode", isOn: Binding(
+                        get: { settings.fieldValidationMode },
+                        set: { settings.fieldValidationMode = $0 }))
                     Toggle("Show confidence on the plan", isOn: Binding(
                         get: { settings.showConfidenceOnPlan },
                         set: { settings.showConfidenceOnPlan = $0 }))
@@ -59,7 +68,7 @@ struct SettingsScreen: View {
                 } header: {
                     Text("Scanning")
                 } footer: {
-                    Text("Sensor data is the LiDAR mesh, camera poses, keyframes and any photos you take while scanning. It stays on this device, gives every wall an evidence score, powers the live coverage map and lets a scan be re-processed later without revisiting the property. Roughly 20–60 MB per property.")
+                    Text("Sensor data is the LiDAR mesh, camera poses, keyframes and any photos you take while scanning. It stays on this device, gives every wall an evidence score, powers the live coverage map and lets a scan be re-processed later without revisiting the property. Roughly 20–60 MB per property.\n\nField validation mode adds a preflight test, live sensor diagnostics on screen, ground-truth recording against a laser, and an export bundle for analysing accuracy afterwards. It forces sensor recording on, because a validation scan without its evidence cannot be re-processed.")
                 }
 
                 Section("Company Branding (Reports)") {

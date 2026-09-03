@@ -124,6 +124,73 @@ PDF report, and every export (PNG/SVG/DXF/CSV/JSON/.fieldplan).
     together and the north arrow follows. Rename Level shows the new name on
     the plan, the schedules and the report.
 
+## Build 15 — field validation and recovery
+
+These are the ones that matter before collecting real data. Items 32–36 are
+destructive on purpose: the point is to prove a scan cannot be lost.
+
+32. **Interruption**: start a scan, accept two rooms, then call the phone
+    from another phone and answer. Come back to FieldPlan. You should get
+    *Scan Interrupted* naming both accepted rooms, with **Continue This
+    Scan** and **Finish With Saved Rooms**. Continue should relocalize (walk
+    back to a scanned room and point at it) and then let you scan on. Report
+    it if Continue succeeds but the next room lands in the wrong place — that
+    is the case the origin-anchor check is meant to catch.
+33. **Termination**: accept three rooms, then force-quit FieldPlan from the
+    app switcher without finishing the level. Reopen the project and tap
+    Scan Property. You should get *Unfinished Scan — 3 rooms saved* with the
+    last room's name and time, and three choices. Choose **Finish With Saved
+    Rooms**: all three rooms must appear on the plan. Nothing should be lost,
+    and nothing should be imported twice.
+34. **Re-open after finishing**: reopen the same project and tap Scan
+    Property again. There must be **no** recovery prompt — the rooms were
+    imported, so there is nothing unfinished.
+35. **Discard**: repeat item 33, but choose **Discard Unfinished Session**
+    and confirm. The rooms go; the prompt does not come back. This is the
+    only path that throws a scan away, and it takes two taps to reach.
+36. **Checkpoint failure**: fill the phone almost full (a large video file
+    works), then scan and accept a room. If the write fails you must get
+    *Room Not Saved* naming the room. Silence here is a bug.
+37. **Preflight**: Project → Validation → Run Preflight Test. With Airplane
+    Mode on and Location off you should get warnings on compass heading but
+    **Ready to scan**; with sensor recording off (only possible with
+    validation mode off) the recorder check must *block*.
+38. **Validation mode banner**: turn Field Validation Mode on. The screen
+    must state the app version and build, the device identifier
+    (iPhone17,x), the iOS version, LiDAR present, recording on, and the
+    session ID. Check the build number matches the one you installed —
+    that is how a mismatched install is caught.
+39. **Live diagnostics**: scan with validation mode on. The diagnostics panel
+    must show tracking, world map state, depth confidence, mesh anchor count,
+    "rooms saved to disk N of N" and recording time left. If rooms saved is
+    ever behind rooms accepted, stop and report it.
+40. **Storage warning**: scan until under about 15 minutes of space remains.
+    The warning should appear once, in minutes, not gigabytes; at critical it
+    turns red. Everything already scanned must still be recoverable.
+41. **Ground truth**: Validation → Measure Elements. Tap a wall: everything
+    is filled in and the keyboard is already up on the laser field. Type what
+    the laser says, tap **Save & Next Element**, and you are straight back on
+    the plan with a tick on that wall. Do twenty in a row and time it — this
+    is the workflow that has to survive hundreds of measurements.
+42. **Every method side by side**: after a dozen samples, tap **Compare
+    Methods**. FieldPlan's value, the mesh fit and the original scan should
+    each have their own mean error and their own "no answer" count. If any
+    two are identical for every sample, the mesh alternate is not being
+    recorded — report it.
+43. **Repeatability**: scan the same property a second time on the same day.
+    When measuring, use the *same* "same physical element" name for the same
+    real wall (pick it from the list). The Repeatability section should then
+    show a spread across two scans for that wall.
+44. **Problem flags**: tap the flag button, then tap something wrong on the
+    plan and pick a kind. It must appear as a marker on the plan and in the
+    list — and the plan itself must be unchanged.
+45. **Checklist and bundle**: before leaving, Validation → Field Visit
+    Checklist. Work every open item. Then **Export Validation Bundle** and
+    AirDrop the zip to a Mac. It should contain the manifest, the samples
+    CSV, the analysis, the markers, the scan events and the plan. Open the
+    CSV: each row must carry the laser value and every method's answer in
+    its own column.
+
 ## Known limitations to verify/accept
 
 - Rooms scanned in *separate* sessions do not share a coordinate space; they
@@ -133,3 +200,11 @@ PDF report, and every export (PNG/SVG/DXF/CSV/JSON/.fieldplan).
   room behind it reads one wall too wide. Walk both sides of every partition.
 - Very cluttered/mirrored rooms reduce capture confidence — check the QA
   screen after each floor.
+- **Resuming across a coordinate space is unproven on device.** Apple does
+  not document whether an `ARWorldMap` survives RoomPlan re-running the
+  session with its own configuration. FieldPlan attempts the restore and
+  then verifies it against an origin anchor; if the check fails it refuses to
+  merge and says so. Item 32 is what tells us which way it actually goes.
+- FieldPlan does not yet choose between measurement methods. It records what
+  each one said and how far each was from the laser. Deciding which is better
+  needs many properties, not one.

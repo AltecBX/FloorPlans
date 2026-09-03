@@ -21,6 +21,8 @@ final class ScanCoordinator: NSObject, ObservableObject {
         case processing
         case review              // captured room ready to accept/rescan
         case merging
+        case interrupted         // stopped mid-room; the walk can be resumed
+        case relocalizing        // restoring the world map before scanning on
         case failed(String)
     }
 
@@ -30,12 +32,22 @@ final class ScanCoordinator: NSObject, ObservableObject {
     @Published var liveWallCount = 0
     @Published var currentRoomName = ""
     @Published private(set) var recorder: ScanRecorder? = nil
+    /// Set when a room was accepted but could not be written to disk. The
+    /// flow must not pretend that room is safe.
+    @Published var checkpointFailure: String? = nil
 
-    let captureView = RoomCaptureView(frame: .zero)
+    /// FieldPlan owns the ARSession and hands it to RoomPlan (build 15).
+    let spatial = SpatialSession()
+    lazy var captureView: RoomCaptureView = spatial.makeCaptureView()
     private(set) var pendingRoom: CapturedRoom? = nil
     private(set) var acceptedRooms: [(name: String, room: CapturedRoom)] = []
     private var sessionActive = false
     private var lastLiveRoomForward: TimeInterval = 0
+    private var projectID: UUID?
+    private var levelID: UUID?
+    /// Checkpoints written during this flow, so Finish Level can fold in
+    /// exactly what was saved rather than what happens to be in memory.
+    private(set) var checkpointIDs: Set<UUID> = []
 
     override init() {
         super.init()
@@ -44,23 +56,41 @@ final class ScanCoordinator: NSObject, ObservableObject {
     }
 
     func startRoom(named name: String, projectID: UUID, levelID: UUID?) {
+        // A room started while ARKit is still finding itself would be built
+        // in a coordinate system that is about to move.
+        guard !spatial.isBusyRelocalizing else {
+            phase = .failed("Still relocalizing — wait until tracking recovers before scanning another room.")
+            return
+        }
+        self.projectID = projectID
+        self.levelID = levelID
         currentRoomName = name
         pendingRoom = nil
+
+        spatial.configure(
+            projectID: projectID, levelID: levelID,
+            scanSessionID: recorder?.sessionID,
+            mapsDirectory: ScanCheckpointStore.shared.worldMapsDir(projectID))
+
         var configuration = RoomCaptureSession.Configuration()
         configuration.isCoachingEnabled = true
         captureView.captureSession.run(configuration: configuration)
         sessionActive = true
+        spatial.plantOriginAnchor()
 
-        // One recorder per flow: it observes the shared ARSession, so every
-        // room scanned without leaving this screen lands in one session log.
+        // One recorder per flow: it observes the session FieldPlan owns, so
+        // every room scanned without leaving this screen lands in one log.
         if recorder == nil, SettingsStore.shared.recordSensorData {
             let recorder = ScanRecorder(
                 projectID: projectID, levelID: levelID,
                 directory: ProjectStore.shared.sessionsDir(projectID))
-            recorder.attach(to: captureView.captureSession.arSession)
+            recorder.spatial = spatial
+            recorder.attach(to: spatial.arSession)
             self.recorder = recorder
-            // RoomPlan may install its own delegate after `run`; make sure the
-            // recorder is still in the chain once frames should be flowing.
+            spatial.recorderDelegate = recorder
+            // RoomPlan configures the session it was handed; if it also takes
+            // the delegate, rejoin behind it. The re-attach is recorded as a
+            // session event so the field visit shows whether it happens.
             DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak recorder] in
                 recorder?.ensureAttached()
             }
@@ -90,12 +120,46 @@ final class ScanCoordinator: NSObject, ObservableObject {
         UIApplication.shared.isIdleTimerDisabled = false
     }
 
+    /// Accepting a room writes it to disk *first*. If iOS terminates the app
+    /// a second later, reopening the project still knows this room was
+    /// captured — which was not true before build 15.
     func acceptPendingRoom() {
         guard let room = pendingRoom else { return }
         acceptedRooms.append((currentRoomName, room))
         acceptedRoomNames.append(currentRoomName)
         recorder?.noteAcceptedRoom(room.identifier)
         recorder?.record(.roomFinished, detail: currentRoomName)
+
+        if let projectID {
+            let grid = recorder?.coverageGrid
+            let checkpoint = ScanCheckpointStore.shared.checkpoint(
+                room: room,
+                name: currentRoomName,
+                projectID: projectID,
+                levelID: levelID,
+                scanSessionID: recorder?.sessionID,
+                worldMapCheckpointID: spatial.bestCheckpoint?.id,
+                cameraTransform: spatial.arSession.currentFrame
+                    .map { SpatialSession.floats($0.camera.transform) },
+                floorCoverage: grid?.observedFloorArea,
+                wallCoverage: nil,
+                meshChunkCount: recorder?.meshChunks.count)
+            if let checkpoint {
+                checkpointIDs.insert(checkpoint.id)
+                recorder?.record(.checkpoint, detail: "room \(currentRoomName)")
+            } else {
+                // The one failure that must not be hidden: the room is in
+                // memory only, and a termination would lose it.
+                checkpointFailure = "“\(currentRoomName)” could not be saved to disk. Finish the level now — this room is only in memory."
+            }
+            // A map taken right after a room is the best place to resume from.
+            spatial.checkpointWorldMap(
+                acceptedRoomCount: acceptedRooms.count,
+                lastAcceptedRoomID: room.identifier,
+                referenceKeyframe: nil,
+                minimumInterval: 0)
+        }
+
         pendingRoom = nil
         phase = .ready
         UIApplication.shared.isIdleTimerDisabled = false
@@ -105,6 +169,39 @@ final class ScanCoordinator: NSObject, ObservableObject {
         pendingRoom = nil
         recorder?.record(.roomDiscarded, detail: currentRoomName)
         phase = .ready
+    }
+
+    /// Picks up a walk that was interrupted before Finish Level ran (build 15
+    /// §3). The rooms are read back from their checkpoints, so what the flow
+    /// shows is what is actually on disk — not a count taken on trust. A room
+    /// whose file will not decode is reported, never quietly dropped.
+    func adoptUnfinished(_ unfinished: UnfinishedScan, projectID: UUID) {
+        self.projectID = projectID
+        let store = ScanCheckpointStore.shared
+        let restored = store.restoreRooms(unfinished.checkpoints, projectID: projectID)
+        for (checkpoint, room) in restored.rooms where !checkpointIDs.contains(checkpoint.id) {
+            acceptedRooms.append((checkpoint.roomName, room))
+            acceptedRoomNames.append(checkpoint.roomName)
+            checkpointIDs.insert(checkpoint.id)
+            if levelID == nil { levelID = checkpoint.levelID }
+        }
+        if !restored.failed.isEmpty {
+            let names = restored.failed.map(\.roomName).joined(separator: ", ")
+            checkpointFailure = "These saved rooms could not be read back: \(names). Their files are still in the project folder."
+        }
+        // Restoring the map is what lets the rest of the property be scanned
+        // into the same coordinate space. Without one, continuing starts a
+        // separate space that has to be aligned later — say so rather than
+        // merging two frames as if they were one.
+        spatial.configure(
+            projectID: projectID, levelID: levelID, scanSessionID: recorder?.sessionID,
+            mapsDirectory: store.worldMapsDir(projectID))
+        if unfinished.worldMapAvailable, spatial.bestCheckpoint != nil {
+            phase = .relocalizing
+            spatial.beginRelocalization()
+        } else {
+            phase = .ready
+        }
     }
 
     /// Called after a successful save so the next session starts clean.
@@ -119,14 +216,50 @@ final class ScanCoordinator: NSObject, ObservableObject {
     }
 
     /// Handles app interruption (phone call, backgrounding) — spec §46.
-    /// Accepted rooms are already safe; only the in-progress room is lost.
+    ///
+    /// Accepted rooms really are safe now: each was written to disk when it
+    /// was accepted. Only the room in progress is lost, and the walk can be
+    /// resumed rather than abandoned.
     func handleInterruption() {
         guard phase == .scanning else { return }
         captureView.captureSession.stop(pauseARSession: false)
         sessionActive = false
         recorder?.record(.interrupted, detail: "app inactive")
-        phase = .failed("Scanning was interrupted. Rooms already accepted are saved — rescan the room that was in progress.")
+        // Take a map on the way out; it is what a resume relocalizes against.
+        spatial.checkpointWorldMap(
+            acceptedRoomCount: acceptedRooms.count,
+            lastAcceptedRoomID: acceptedRooms.last?.room.identifier,
+            referenceKeyframe: nil,
+            minimumInterval: 0)
+        phase = .interrupted
         UIApplication.shared.isIdleTimerDisabled = false
+    }
+
+    /// Restores the last world map and waits for ARKit to recognise the
+    /// place. Nothing is scanned or merged until it does.
+    func resumeAfterInterruption() {
+        guard spatial.bestCheckpoint != nil else {
+            phase = .failed("No world map was saved, so this walk cannot be resumed in the same coordinate space. Finish with the rooms already saved, or start a separate scan.")
+            return
+        }
+        recorder?.record(.interruptionEnded, detail: "resume requested")
+        phase = .relocalizing
+        spatial.beginRelocalization()
+    }
+
+    /// Called when relocalization settles. Success returns to scanning;
+    /// failure never merges — it offers a separate session instead.
+    func relocalizationSettled() {
+        switch spatial.relocalization {
+        case .succeeded:
+            recorder?.record(.relocalized, detail: "coordinates verified")
+            phase = .ready
+        case .failed:
+            recorder?.record(.relocalizationFailed, detail: "coordinates could not be verified")
+            phase = .failed("Unable to relocalize. The rooms already saved are safe. Scanning more now would start a separate coordinate space that has to be aligned later.")
+        default:
+            break
+        }
     }
 
     /// Closes the sensor session and hands back its log, coverage map and
@@ -152,14 +285,17 @@ final class ScanCoordinator: NSObject, ObservableObject {
     /// Merges accepted rooms with StructureBuilder (multi-room alignment) and
     /// returns the merged structure plus per-room results. Falls back to the
     /// individually captured rooms if merging fails (spec §46).
-    func mergedStructure() async -> CapturedStructure? {
-        guard acceptedRooms.count >= 1 else { return nil }
+    /// Merges the rooms being folded in — which after build 15 come from the
+    /// checkpoints on disk, not only from this flow's memory. A failure here
+    /// costs the combined USDZ preview and nothing else; the rooms are
+    /// already safe and the canonical model is built without it.
+    func mergedStructure(_ rooms: [CapturedRoom]) async -> CapturedStructure? {
+        guard !rooms.isEmpty else { return nil }
         phase = .merging
         defer { phase = .ready }
         do {
             let builder = StructureBuilder(options: [.beautifyObjects])
-            let structure = try await builder.capturedStructure(from: acceptedRooms.map(\.room))
-            return structure
+            return try await builder.capturedStructure(from: rooms)
         } catch {
             AppLog.scan.error("Structure merge failed: \(error.localizedDescription)")
             return nil
@@ -277,6 +413,8 @@ struct ScanFlowView: View {
     @State private var reviewLevel: LevelGeometry? = nil
     @State private var reviewFindings: [SpaceFinding] = []
     @State private var showReview = false
+    /// Rooms left on disk by a walk that never finished (build 15 §3).
+    @State private var recovery: UnfinishedScan? = nil
 
     var body: some View {
         Group {
@@ -295,6 +433,31 @@ struct ScanFlowView: View {
                 coordinator.handleInterruption()
             }
         }
+        // A room that could not be written to disk is the one failure that
+        // must not be silent — the owner has to know before walking away.
+        .alert("Room Not Saved", isPresented: .constant(coordinator.checkpointFailure != nil)) {
+            Button("OK") { coordinator.checkpointFailure = nil }
+        } message: {
+            Text(coordinator.checkpointFailure ?? "")
+        }
+        .sheet(item: $recovery) { unfinished in
+            UnfinishedScanSheet(
+                project: project,
+                unfinished: unfinished,
+                onContinue: {
+                    recovery = nil
+                    coordinator.adoptUnfinished(unfinished, projectID: project.id)
+                },
+                onFinish: {
+                    recovery = nil
+                    coordinator.adoptUnfinished(unfinished, projectID: project.id)
+                    Task { await finishLevel() }
+                },
+                onDiscard: {
+                    ScanCheckpointStore.shared.discardUnfinished(for: project.id)
+                    recovery = nil
+                })
+        }
     }
 
     @ViewBuilder
@@ -307,6 +470,10 @@ struct ScanFlowView: View {
         case .merging:
             ProgressView("Merging rooms…")
                 .controlSize(.large)
+        case .interrupted:
+            interruptedView
+        case .relocalizing:
+            relocalizingView
         case .failed(let message):
             VStack(spacing: 16) {
                 Image(systemName: "exclamationmark.triangle.fill")
@@ -319,6 +486,96 @@ struct ScanFlowView: View {
                     .buttonStyle(BigButtonStyle())
                     .padding(.horizontal, 40)
             }
+        }
+    }
+
+    // MARK: Interruption and resume (build 15, priorities 1 and 3)
+
+    /// A phone call does not end a property visit. Every accepted room is
+    /// already on disk; the only question is whether to carry on in the same
+    /// coordinate space or stop here. Nothing is discarded on its own.
+    private var interruptedView: some View {
+        ScrollView {
+            VStack(spacing: 16) {
+                Image(systemName: "pause.circle.fill")
+                    .font(.system(size: 54))
+                    .foregroundStyle(.orange)
+                Text("Scan Interrupted")
+                    .font(.title2.weight(.semibold))
+                Text(coordinator.acceptedRoomNames.isEmpty
+                     ? "The room in progress was lost. No rooms had been accepted yet."
+                     : "\(coordinator.acceptedRoomNames.count) accepted room(s) are saved on this phone. Only the room in progress was lost.")
+                    .multilineTextAlignment(.center)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal)
+
+                if !coordinator.acceptedRoomNames.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(Array(coordinator.acceptedRoomNames.enumerated()), id: \.offset) { index, name in
+                            Label(name.isEmpty ? "Room \(index + 1)" : name,
+                                  systemImage: "checkmark.circle.fill")
+                                .foregroundStyle(.green)
+                                .font(.subheadline)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding()
+                    .background(RoundedRectangle(cornerRadius: AppTheme.corner)
+                        .fill(Color(.secondarySystemGroupedBackground)))
+                    .padding(.horizontal)
+                }
+
+                Button {
+                    coordinator.resumeAfterInterruption()
+                } label: {
+                    Label("Continue This Scan", systemImage: "play.fill")
+                }
+                .buttonStyle(BigButtonStyle())
+                .padding(.horizontal)
+
+                if !coordinator.acceptedRooms.isEmpty {
+                    Button {
+                        Task { await finishLevel() }
+                    } label: {
+                        Label("Finish With Saved Rooms", systemImage: "checkmark.seal")
+                    }
+                    .buttonStyle(BigButtonStyle(prominent: false))
+                    .disabled(saving)
+                    .padding(.horizontal)
+                }
+
+                Text("Continuing restores the saved world map first so the remaining rooms land in the same coordinate space. If the phone cannot recognise where it is, nothing is merged — you will be told and offered a separate scan.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal)
+            }
+            .padding(.vertical, 24)
+        }
+    }
+
+    private var relocalizingView: some View {
+        VStack(spacing: 16) {
+            ProgressView()
+                .controlSize(.large)
+            Text(coordinator.spatial.relocalization.message)
+                .font(.headline)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal)
+            Text("Walk back to somewhere you already scanned and point the phone at it. Nothing new is captured until the phone knows where it is again.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal)
+            Button("Stop Trying") {
+                coordinator.spatial.abandonRelocalization()
+                coordinator.phase = .interrupted
+            }
+            .buttonStyle(BigButtonStyle(prominent: false))
+            .padding(.horizontal, 40)
+        }
+        .onChange(of: coordinator.spatial.relocalization) { _, _ in
+            coordinator.relocalizationSettled()
         }
     }
 
@@ -459,6 +716,26 @@ struct ScanFlowView: View {
 
             VStack {
                 if let recorder = coordinator.recorder, coordinator.phase == .scanning {
+                    if SettingsStore.shared.fieldValidationMode {
+                        FieldDiagnosticsPanel(
+                            recorder: recorder,
+                            spatial: coordinator.spatial,
+                            acceptedRooms: coordinator.acceptedRooms.count,
+                            checkpointedRooms: coordinator.checkpointIDs.count)
+                            .padding(.horizontal, 10)
+                    }
+                    if let storage = recorder.live.storage, let message = storage.message {
+                        Text(message)
+                            .font(.footnote.weight(.medium))
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 8)
+                            .background(Capsule().fill(storage.level == .critical
+                                                       ? AnyShapeStyle(Color.red.opacity(0.85))
+                                                       : AnyShapeStyle(.ultraThinMaterial)))
+                            .foregroundStyle(storage.level == .critical ? Color.white : Color.primary)
+                            .padding(.horizontal, 10)
+                    }
                     ScanLiveOverlay(
                         recorder: recorder,
                         roomName: coordinator.currentRoomName,
@@ -561,6 +838,11 @@ struct ScanFlowView: View {
         } catch {
             saveError = error.localizedDescription
         }
+        // Rooms saved by a walk that never reached Finish Level. Offered
+        // once, on arrival, and never resolved without an explicit choice.
+        if recovery == nil, coordinator.acceptedRooms.isEmpty {
+            recovery = ScanCheckpointStore.shared.unfinished(for: project.id)
+        }
     }
 
     /// Persists everything: raw scans, USDZ, the sensor session, converted
@@ -593,7 +875,33 @@ struct ScanFlowView: View {
             saveError = "The selected level no longer exists."
             return
         }
-        let dtos = coordinator.acceptedRooms.map {
+        // Rooms come from the checkpoints on disk, not from memory: that way
+        // a walk interrupted earlier is folded in too, and a room that was
+        // accepted before a termination is never left behind. Each is keyed
+        // by its RoomPlan identifier, so a room already merged is skipped and
+        // reprocessing cannot duplicate it.
+        let checkpointStore = ScanCheckpointStore.shared
+        let outstanding = CheckpointStore.outstanding(checkpointStore.checkpoints(for: project.id))
+        let restored = checkpointStore.restoreRooms(outstanding, projectID: project.id)
+        if !restored.failed.isEmpty {
+            let names = restored.failed.map(\.roomName).joined(separator: ", ")
+            saveError = "These saved rooms could not be read back and were left untouched: \(names). Their files are still in the project."
+        }
+        var byIdentifier: [UUID: (name: String, room: CapturedRoom)] = [:]
+        for (checkpoint, room) in restored.rooms {
+            byIdentifier[checkpoint.id] = (checkpoint.roomName, room)
+        }
+        // Anything still only in memory (its checkpoint write failed) is
+        // included rather than dropped.
+        for accepted in coordinator.acceptedRooms where byIdentifier[accepted.room.identifier] == nil {
+            byIdentifier[accepted.room.identifier] = (accepted.name, accepted.room)
+        }
+        guard !byIdentifier.isEmpty else {
+            saveError = "There are no captured rooms to save."
+            return
+        }
+        let mergedCheckpointIDs = Set(byIdentifier.keys)
+        let dtos = byIdentifier.values.map {
             CapturedRoomBridge.dto(from: $0.room, name: $0.name.isEmpty ? nil : $0.name)
         }
         let groups = LevelAssignment.groupByFloor(dtos)
@@ -632,37 +940,46 @@ struct ScanFlowView: View {
             for room in placement.rooms { levelOfRoom[room.id] = placement.levelID }
         }
 
-        // 2. Persist raw per-room scans immediately (data preservation first).
-        for (name, room) in coordinator.acceptedRooms {
-            let scanID = room.identifier
-            var rawName: String? = nil
-            var usdzName: String? = nil
-            do {
-                let data = try CapturedRoomBridge.rawJSON(for: room)
-                rawName = "\(scanID.uuidString).json"
-                try data.write(to: scansDir.appendingPathComponent(rawName!), options: .atomic)
-            } catch {
-                AppLog.scan.error("Raw scan save failed: \(error.localizedDescription)")
-            }
-            do {
-                let usdz = "\(scanID.uuidString).usdz"
-                try room.export(to: scansDir.appendingPathComponent(usdz), exportOptions: .parametric)
-                usdzName = usdz
-            } catch {
-                AppLog.scan.error("USDZ export failed: \(error.localizedDescription)")
+        // 2. The raw capture and USDZ were written when each room was
+        // accepted, so nothing is re-encoded here. What is still needed is
+        // the catalogue record — inserted only when it is missing, so
+        // reprocessing a checkpoint cannot list the same scan twice.
+        let existingScanIDs = Set(project.scans.map(\.id))
+        for (identifier, entry) in byIdentifier where !existingScanIDs.contains(identifier) {
+            let checkpoint = outstanding.first { $0.id == identifier }
+            var rawName = checkpoint?.rawDataFileName
+            var usdzName = checkpoint?.usdzFileName
+            if rawName == nil {
+                // Only reached when the checkpoint write failed earlier; this
+                // is the last chance to get the capture onto disk.
+                do {
+                    let data = try CapturedRoomBridge.rawJSON(for: entry.room)
+                    let file = "\(identifier.uuidString).json"
+                    try data.write(to: scansDir.appendingPathComponent(file), options: .atomic)
+                    rawName = file
+                } catch {
+                    AppLog.scan.error("Raw scan save failed: \(error.localizedDescription)")
+                }
+                do {
+                    let usdz = "\(identifier.uuidString).usdz"
+                    try entry.room.export(to: scansDir.appendingPathComponent(usdz), exportOptions: .parametric)
+                    usdzName = usdz
+                } catch {
+                    AppLog.scan.error("USDZ export failed: \(error.localizedDescription)")
+                }
             }
             let record = ScanRecord(
-                id: scanID, levelID: levelOfRoom[scanID] ?? selectedID,
-                roomName: name.isEmpty ? "Auto-labeled room" : name,
+                id: identifier, levelID: levelOfRoom[identifier] ?? selectedID,
+                roomName: entry.name.isEmpty ? "Auto-labeled room" : entry.name,
                 rawDataFileName: rawName, usdzFileName: usdzName,
-                sessionID: session?.log.id)
+                sessionID: session?.log.id ?? checkpoint?.scanSessionID)
             record.project = project
             context.insert(record)
         }
 
         // 3. Merge into a structure for the combined USDZ (best effort).
-        if coordinator.acceptedRooms.count > 1 {
-            if let structure = await coordinator.mergedStructure() {
+        if byIdentifier.count > 1 {
+            if let structure = await coordinator.mergedStructure(byIdentifier.values.map(\.room)) {
                 do {
                     let url = scansDir.appendingPathComponent("structure-\(UUID().uuidString).usdz")
                     try structure.export(to: url, exportOptions: .parametric)
@@ -720,6 +1037,9 @@ struct ScanFlowView: View {
 
         do {
             try store.saveSnapshot(current, projectID: project.id)
+            // The rooms are now in the canonical model: stamp their
+            // checkpoints so a later Finish Level cannot import them again.
+            checkpointStore.markMerged(mergedCheckpointIDs, snapshotID: current.id, projectID: project.id)
             if let session, let base = touched.first(where: { $0.id == selectedID }) ?? touched.first {
                 store.importSessionPhotos(session.log, project: project, level: base, context: context)
             }
@@ -834,6 +1154,96 @@ struct ManualModeIntroView: View {
                 .padding(.horizontal)
             }
             .padding(.vertical, 40)
+        }
+    }
+}
+
+// MARK: - Unfinished scan recovery (build 15, priority 3)
+
+/// Shown when a project has rooms on disk from a walk that never reached
+/// Finish Level. Three explicit choices, and no default that throws data
+/// away: nothing is discarded unless the owner says so.
+struct UnfinishedScanSheet: View {
+    let project: ProjectRecord
+    let unfinished: UnfinishedScan
+    let onContinue: () -> Void
+    let onFinish: () -> Void
+    let onDiscard: () -> Void
+
+    @State private var confirmDiscard = false
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: 16) {
+                    Image(systemName: "clock.arrow.circlepath")
+                        .font(.system(size: 50))
+                        .foregroundStyle(.orange)
+                    Text("Unfinished Scan")
+                        .font(.title2.weight(.semibold))
+                    Text("\(unfinished.roomCount) room(s) saved")
+                        .font(.headline)
+                    if let name = unfinished.lastRoomName, let at = unfinished.lastCapturedAt {
+                        Text("Last scan: \(name) · \(at.formatted(date: .abbreviated, time: .shortened))")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(unfinished.checkpoints.sorted(by: { $0.capturedAt < $1.capturedAt }), id: \.id) { checkpoint in
+                            HStack {
+                                Label(checkpoint.roomName, systemImage: "checkmark.circle.fill")
+                                    .foregroundStyle(.green)
+                                Spacer()
+                                if checkpoint.rawDataFileName == nil {
+                                    Text("no raw file")
+                                        .foregroundStyle(.orange)
+                                }
+                            }
+                            .font(.subheadline)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding()
+                    .background(RoundedRectangle(cornerRadius: AppTheme.corner)
+                        .fill(Color(.secondarySystemGroupedBackground)))
+
+                    Button(action: onContinue) {
+                        Label("Continue Property Scan", systemImage: "play.fill")
+                    }
+                    .buttonStyle(BigButtonStyle())
+
+                    Button(action: onFinish) {
+                        Label("Finish With Saved Rooms", systemImage: "checkmark.seal.fill")
+                    }
+                    .buttonStyle(BigButtonStyle(prominent: false))
+
+                    Button(role: .destructive) {
+                        confirmDiscard = true
+                    } label: {
+                        Label("Discard Unfinished Session", systemImage: "trash")
+                            .frame(maxWidth: .infinity, minHeight: AppTheme.bigButtonMinHeight)
+                    }
+
+                    Text(unfinished.worldMapAvailable
+                         ? "A world map was saved, so continuing can put the remaining rooms in the same coordinate space as these ones."
+                         : "No world map was saved. Rooms scanned now would be in a separate coordinate space that has to be aligned later — finishing with what is saved is usually the better choice.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+                .padding()
+            }
+            .navigationTitle(project.name)
+            .navigationBarTitleDisplayMode(.inline)
+            .interactiveDismissDisabled()
+            .confirmationDialog(
+                "Discard \(unfinished.roomCount) saved room(s)? This cannot be undone.",
+                isPresented: $confirmDiscard, titleVisibility: .visible) {
+                Button("Discard", role: .destructive, action: onDiscard)
+                Button("Keep", role: .cancel) {}
+            }
         }
     }
 }

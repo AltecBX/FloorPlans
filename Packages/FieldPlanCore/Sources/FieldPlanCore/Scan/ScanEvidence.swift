@@ -243,6 +243,9 @@ public struct SessionEvent: Codable, Hashable, Sendable {
         case roomStarted, roomFinished, roomDiscarded
         case interrupted, interruptionEnded, relocalized
         case trackingChanged, instruction, warning, photoTaken
+        // Build 15: what a field visit needs to explain a bad scan later.
+        case checkpoint, worldMapSaved, relocalizationFailed
+        case storageWarning, thermalWarning, delegateReattached
     }
 
     public var time: Double

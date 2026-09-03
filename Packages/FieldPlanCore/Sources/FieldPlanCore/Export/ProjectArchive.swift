@@ -142,6 +142,13 @@ public struct ProjectArchive: Codable, Sendable {
     public var takeoffItems: [TakeoffItem]
     /// Known-dimension tests recorded against this project's geometry.
     public var accuracySamples: [AccuracySample]?
+    // Build 15 field validation. All optional so a build 14 package, which
+    // has none of it, still decodes unchanged.
+    public var validationSessions: [ValidationSession]?
+    public var validationSamples: [ValidationSample]?
+    public var problemMarkers: [ProblemMarker]?
+    public var roomCheckpoints: [RoomCheckpoint]?
+    public var worldMapCheckpoints: [WorldMapCheckpoint]?
 
     public init(
         schemaVersion: Int = ProjectArchive.currentSchemaVersion,
@@ -155,7 +162,12 @@ public struct ProjectArchive: Codable, Sendable {
         notes: [NoteMeta] = [],
         scanSessions: [ScanSessionMeta] = [],
         takeoffItems: [TakeoffItem] = [],
-        accuracySamples: [AccuracySample]? = nil
+        accuracySamples: [AccuracySample]? = nil,
+        validationSessions: [ValidationSession]? = nil,
+        validationSamples: [ValidationSample]? = nil,
+        problemMarkers: [ProblemMarker]? = nil,
+        roomCheckpoints: [RoomCheckpoint]? = nil,
+        worldMapCheckpoints: [WorldMapCheckpoint]? = nil
     ) {
         self.schemaVersion = schemaVersion
         self.exportedAt = exportedAt
@@ -169,6 +181,11 @@ public struct ProjectArchive: Codable, Sendable {
         self.scanSessions = scanSessions
         self.takeoffItems = takeoffItems
         self.accuracySamples = accuracySamples
+        self.validationSessions = validationSessions
+        self.validationSamples = validationSamples
+        self.problemMarkers = problemMarkers
+        self.roomCheckpoints = roomCheckpoints
+        self.worldMapCheckpoints = worldMapCheckpoints
     }
 
     // MARK: - Serialization

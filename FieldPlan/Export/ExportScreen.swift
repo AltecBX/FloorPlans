@@ -172,7 +172,7 @@ struct ExportScreen: View {
         let allLevels = snapshot?.levels ?? [level]
         let grossArea = ProjectSummaryStats.compute(levels: allLevels).totalFloorArea
         let formatter = settings.formatter
-        var summary = ["Total GLA: \(formatter.area(grossArea))  |  Total: \(formatter.area(grossArea))"]
+        var summary = ["Measured Floor Area: \(formatter.area(grossArea))"]
         if allLevels.count > 1 {
             summary.append("\(level.name): \(formatter.area(area))")
         }

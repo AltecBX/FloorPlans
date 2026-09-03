@@ -282,3 +282,86 @@ struct ScanReviewSheet: View {
         }
     }
 }
+
+// MARK: - Field diagnostics (build 15, priority 6)
+//
+// In validation mode the walk is an experiment, so the numbers behind it are
+// on screen rather than in a log: tracking, mapping, depth, mesh, what has
+// been checkpointed, and how much recording time the phone has left. If
+// something is going wrong it should be obvious at the property, not
+// discovered at home.
+
+struct FieldDiagnosticsPanel: View {
+    @ObservedObject var recorder: ScanRecorder
+    @ObservedObject var spatial: SpatialSession
+    let acceptedRooms: Int
+    let checkpointedRooms: Int
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack {
+                Text("FIELD DIAGNOSTICS")
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(.orange)
+                Spacer()
+                Text(recorder.sessionID.uuidString.prefix(8))
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.secondary)
+            }
+            row("Tracking", recorder.live.quality.tracking.displayName,
+                ok: recorder.live.quality.tracking.isNormal)
+            row("World map", mappingText, ok: spatial.mappingState == .mapped)
+            row("Depth", depthText, ok: recorder.live.quality.depthAvailable)
+            row("Mesh anchors", "\(recorder.live.meshAnchorCount)", ok: recorder.live.meshAnchorCount > 0)
+            row("Poses / keyframes", "\(recorder.live.keyframeCount) kf", ok: recorder.live.keyframeCount > 0)
+            row("Rooms saved to disk", "\(checkpointedRooms) of \(acceptedRooms)",
+                ok: checkpointedRooms >= acceptedRooms)
+            row("World map saved", spatial.bestCheckpoint == nil ? "None yet" : "Yes",
+                ok: spatial.bestCheckpoint != nil)
+            if spatial.coordinatesDiverged {
+                Text("Coordinates could not be verified after relocalizing — a later scan would not line up.")
+                    .font(.caption2)
+                    .foregroundStyle(.red)
+            }
+            if let storage = recorder.live.storage {
+                row("Recording left", storageText(storage), ok: storage.level == .ok)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(RoundedRectangle(cornerRadius: 12).fill(.ultraThinMaterial))
+    }
+
+    private var mappingText: String {
+        switch spatial.mappingState {
+        case .mapped: return "Mapped"
+        case .extending: return "Extending"
+        case .limited: return "Limited"
+        case .notAvailable: return "Not available"
+        }
+    }
+
+    private var depthText: String {
+        guard recorder.live.quality.depthAvailable else { return "No LiDAR frames" }
+        guard let high = recorder.live.quality.depthHighFraction else { return "On" }
+        return "\(Int((high * 100).rounded()))% high confidence"
+    }
+
+    private func storageText(_ storage: StorageEstimate) -> String {
+        guard let minutes = storage.remainingMinutes else {
+            return String(format: "%.1f GB free", Double(storage.freeBytes) / 1_000_000_000)
+        }
+        return "≈\(minutes) min"
+    }
+
+    private func row(_ label: String, _ value: String, ok: Bool) -> some View {
+        HStack {
+            Text(label)
+                .foregroundStyle(.secondary)
+            Spacer()
+            Text(value)
+                .foregroundStyle(ok ? Color.primary : Color.orange)
+        }
+        .font(.caption2.monospacedDigit())
+    }
+}

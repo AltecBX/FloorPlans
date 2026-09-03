@@ -1,6 +1,103 @@
 # BUILD STATUS
 
-_Last updated: 2026-09-02_
+_Last updated: 2026-09-03_
+
+## 2026-09-03 — Build 15 (version 1.5): field validation and recovery
+
+Not an accuracy build. This one makes a property visit hard to lose and
+turns it into evidence that can decide, later and with numbers, which
+measurement method is actually better.
+
+**The audit finding that started it.** `ScanFlowView` carried a comment
+saying accepted rooms were already safe and only the in-progress room could
+be lost. That was false: accepted rooms lived in an array in
+`ScanCoordinator` until Finish Level ran, so an iOS memory kill after five
+rooms lost all five. The comment is true now.
+
+- **FieldPlan owns the ARSession** (`SpatialSession`). The app creates the
+  session and hands it to RoomPlan through
+  `RoomCaptureView(frame:arSession:)`, the supported existing-session
+  initializer. The mesh, poses, keyframes, depth, light estimates, tracking
+  and mapping state all stay on one session, so the recorder no longer rides
+  a session it does not control. The 3-second delegate re-attach is kept as
+  instrumented defence and now writes a `delegateReattached` session event,
+  so a field visit shows whether RoomPlan actually takes the delegate.
+- **World map checkpointing** (`WorldMapPolicy`, core, tested). Maps are
+  saved only from `mapped` or `extending` state, and a good map is never
+  overwritten by a worse one. Before saving, an origin anchor is planted;
+  after a restore, the same anchor coming back within 10 cm is what proves
+  the coordinate system survived. **Apple does not document whether
+  `initialWorldMap` survives RoomPlan re-running the session with its own
+  configuration** — so the app attempts the restore, verifies it, and on
+  failure offers a separate session that has to be registered later rather
+  than silently merging two coordinate spaces.
+- **Every accepted room is written to disk immediately**
+  (`ScanCheckpointStore`, `CheckpointStore` in core, tested). Accept writes
+  the raw `CapturedRoom` JSON, the USDZ and a checkpoint record before
+  anything else happens. Everything is keyed by RoomPlan's own
+  `CapturedRoom.identifier`, so replaying a checkpoint cannot import the same
+  room twice, and a merge stamp is never lost to a stale replay. Finish Level
+  now folds in what is *on disk*, not what happens to be in memory. A
+  checkpoint write that fails is the one failure that surfaces to the owner.
+- **Unfinished scan recovery** (`UnfinishedScanSheet`). Reopening a project
+  with unimported rooms offers *Continue Property Scan* / *Finish With Saved
+  Rooms* / *Discard Unfinished Session*. Nothing is discarded without an
+  explicit choice, and Continue restores the world map first.
+- **Field Validation Mode** (`ValidationScreen`): forces sensor recording on
+  and states the app version and build, device identifier, iOS version, LiDAR
+  presence, recorder state and validation session ID, so every number
+  collected is attributable to the build that produced it.
+- **Preflight test** (`Preflight`, `PreflightReport` in core, tested):
+  RoomPlan, LiDAR, camera permission, motion, heading, recorder, storage,
+  battery, thermal state and the session folder. Only genuinely disabling
+  problems block; a missing compass warns.
+- **Live field diagnostics** (`FieldDiagnosticsPanel`): tracking, world
+  mapping, depth confidence, mesh anchors, keyframes, rooms actually written
+  to disk, whether a map is saved, and recording time left — on screen
+  during the walk instead of in a log afterwards.
+- **Storage protection** (`StorageEstimate`, core, tested): measured from
+  the session's own data rate and reported as minutes of recording left,
+  with a 500 MB reserve so the phone never reaches zero. It claims no time
+  remaining until it has a rate to base one on.
+- **Ground truth in one tap and one number** (`ValidationPrefill`, core,
+  tested). Tapping an element on the plan fills in the project, session,
+  level, room, element, type and label, every method's answer, the mesh
+  residual and inlier count, and the evidence and tracking scores. One large
+  field takes the laser or tape value; Save & Next returns to the plan.
+  Recording ground truth never edits geometry.
+- **Competing measurements are never merged** (`CompetingMeasurements`).
+  RoomPlan's value, the mesh fit, the canonical value, the original scanned
+  value and any user edit are each stored separately and each scored against
+  the same laser value. A method with no answer for an element is absent,
+  not zero.
+- **Repeatability** links rescans by an explicit "same physical element"
+  name, never by element IDs — a rescan produces new IDs for the same wall.
+- **Problem markers** (`ProblemMarker`): one tap flags fifteen kinds of
+  wrongness with its place on the plan. Flagging never edits the plan; the
+  wrong geometry stays as scanned so it can be studied.
+- **Validation bundle** (`FieldValidationBundle`, core, tested): manifest,
+  samples as JSON and a 31-column CSV, the analysis, problem markers, the
+  scan event log, the canonical snapshot and the room schedule — with the
+  raw captures, world maps and sensor sessions referenced by path and byte
+  count rather than copied in twice.
+- **Field visit checklist** (`FieldVisitChecklist`, core, tested): ten items
+  built from the app's actual state, not a static list, so a walk is not left
+  with rooms unimported or a session unfinalized.
+- **No measurement arbitration.** Nothing here averages, weights or picks a
+  winner between methods. The comparison screen reports; the decision needs
+  far more properties than one.
+- **The GLA label is gone** where it implied an ANSI Z765 engine that does
+  not exist; the figure is called Measured Floor Area.
+- Core suite: **287 tests**, all passing on Linux — including 16
+  crash-test scenarios (`FieldRecoveryScenarioTests`) covering termination
+  after three rooms, resume-and-finish, rescan, stale replay, drifted
+  relocalization, a full disk and an unreadable raw file. Every app file
+  parses. `AppBoundaryTests` gained two new fences for the build-15 calls,
+  and caught two real signature mistakes before they could reach the Mac.
+- **Not verified here:** the iOS target cannot be compiled in this
+  environment (no Xcode, no macOS, no iOS SDK). Only the Linux core tests and
+  `swiftc -parse` on every app file were run. The Xcode build must be
+  confirmed on the owner's Mac.
 
 ## 2026-09-02 — Build 14 (version 1.4): presentation, quantities, exports (stage 3)
 

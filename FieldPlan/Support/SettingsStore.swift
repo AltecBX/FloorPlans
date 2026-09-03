@@ -16,9 +16,36 @@ final class SettingsStore: ObservableObject {
     @AppStorage("keepScreenAwakeDuringScan") var keepScreenAwakeDuringScan = true
     /// Keep the sensor stream behind each scan (mesh, poses, keyframes,
     /// photos) so it can be re-processed later and scored for confidence.
-    @AppStorage("recordSensorData") var recordSensorData = true
+    @AppStorage("recordSensorData") private var recordSensorDataRaw = true
     /// Draw low-evidence walls in the warning pen on the plan.
     @AppStorage("showConfidenceOnPlan") var showConfidenceOnPlan = false
+
+    /// Field validation mode: every scan is evidence for measuring how
+    /// accurate FieldPlan actually is, so sensor recording is not optional
+    /// while it is on. A validation scan without its sensor data is a
+    /// property visit that cannot be re-processed — which is the whole point
+    /// of collecting it.
+    @AppStorage("fieldValidationMode") private var fieldValidationModeRaw = false
+
+    var fieldValidationMode: Bool {
+        get { fieldValidationModeRaw }
+        set {
+            objectWillChange.send()
+            fieldValidationModeRaw = newValue
+        }
+    }
+
+    var recordSensorData: Bool {
+        get { fieldValidationModeRaw || recordSensorDataRaw }
+        set {
+            objectWillChange.send()
+            recordSensorDataRaw = newValue
+        }
+    }
+
+    /// True when recording is on only because validation mode forces it —
+    /// the settings screen says so rather than letting the switch look broken.
+    var sensorRecordingIsForced: Bool { fieldValidationModeRaw && !recordSensorDataRaw }
 
     // Company branding (spec §35).
     @AppStorage("companyName") var companyName = ""

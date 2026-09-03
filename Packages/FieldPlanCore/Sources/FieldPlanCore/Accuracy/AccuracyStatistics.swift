@@ -13,8 +13,14 @@ public enum AccuracyMeasureKind: String, Codable, CaseIterable, Sendable {
     case roomDepth
     case roomArea
     case doorWidth
+    case doorHeight
     case windowWidth
+    case windowHeight
+    case windowSillHeight
     case openingHeight
+    case stairWidth
+    case stairTreadDepth
+    case stairRiserHeight
     case ceilingHeight
     case wallThickness
     case totalFloorArea
@@ -29,8 +35,14 @@ public enum AccuracyMeasureKind: String, Codable, CaseIterable, Sendable {
         case .roomDepth: return "Room Depth"
         case .roomArea: return "Room Area"
         case .doorWidth: return "Door Width"
+        case .doorHeight: return "Door Height"
         case .windowWidth: return "Window Width"
+        case .windowHeight: return "Window Height"
+        case .windowSillHeight: return "Window Sill Height"
         case .openingHeight: return "Opening Height"
+        case .stairWidth: return "Stair Width"
+        case .stairTreadDepth: return "Stair Tread Depth"
+        case .stairRiserHeight: return "Stair Riser Height"
         case .ceilingHeight: return "Ceiling Height"
         case .wallThickness: return "Wall Thickness"
         case .totalFloorArea: return "Total Floor Area"

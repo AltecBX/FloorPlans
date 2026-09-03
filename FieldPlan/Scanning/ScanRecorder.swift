@@ -39,6 +39,10 @@ final class ScanRecorder: NSObject, ObservableObject {
         var liveWalls: [Wall] = []
         var wallCoverage: [UUID: Double] = [:]
         var observedFloorArea: Double = 0
+        /// Space left, expressed as scanning time remaining (build 15 §7).
+        var storage: StorageEstimate? = nil
+        /// Seconds since this sensor session started.
+        var elapsed: TimeInterval = 0
     }
 
     /// Everything a frame contributes, extracted on the delegate queue so the
@@ -64,6 +68,9 @@ final class ScanRecorder: NSObject, ObservableObject {
     let projectID: UUID
     let levelID: UUID?
     let sessionID: UUID
+    /// The session FieldPlan owns. The recorder is its delegate and feeds it
+    /// tracking and mapping state; it never re-configures the session.
+    weak var spatial: SpatialSession?
     let directory: URL
 
     private let queue = DispatchQueue(label: "com.fieldplan.scanrecorder", qos: .userInitiated)
@@ -99,6 +106,8 @@ final class ScanRecorder: NSObject, ObservableObject {
     private var latestPlanHeading: Double? = nil
     private var externalInstruction: ScanAdviceKind? = nil
     private var finished = false
+    private var storage: StorageEstimate? = nil
+    private var lastStorageLevel: StorageEstimate.Level = .ok
 
     // Sensors.
     private weak var session: ARSession? = nil
@@ -164,7 +173,7 @@ final class ScanRecorder: NSObject, ObservableObject {
         if seen == 0, session.delegate !== self {
             previousDelegate = session.delegate
             session.delegate = self
-            record(.warning, detail: "re-attached to ARSession delegate chain")
+            record(.delegateReattached, detail: "RoomPlan replaced the ARSession delegate")
             AppLog.scan.warning("Scan recorder re-attached: no frames received after attach")
         }
     }
@@ -344,6 +353,13 @@ final class ScanRecorder: NSObject, ObservableObject {
             lastPoseTime = now
             log.poses.append(pose)
             engine.ingest(pose)
+            // The session that owns the world map needs to know when tracking
+            // recovers, so a resume can be verified the moment it does.
+            let tracking = snapshot.tracking
+            let mapping = snapshot.worldMapping
+            DispatchQueue.main.async { [weak self] in
+                self?.spatial?.update(tracking: tracking, mapping: mapping)
+            }
         }
 
         if let image = snapshot.image {
@@ -362,6 +378,7 @@ final class ScanRecorder: NSObject, ObservableObject {
             lastCheckpoint = now
             writeMeshes(all: false)
             writeLog()
+            measureStorage(elapsed: now)
         }
         publish(force: false, now: now)
     }
@@ -401,9 +418,47 @@ final class ScanRecorder: NSObject, ObservableObject {
         status.heading = log.poses.last?.planHeading
         status.liveWalls = liveLevel?.walls ?? []
         status.wallCoverage = latestWallCoverage
+        status.storage = storage
+        status.elapsed = time
         DispatchQueue.main.async { [weak self] in
             self?.live = status
         }
+    }
+
+    // MARK: - Storage (build 15, priority 7)
+
+    /// How much room is left, in minutes of scanning rather than gigabytes —
+    /// a number that means something while walking a house. Measured on the
+    /// recorder queue at the checkpoint interval, because it walks the
+    /// session directory.
+    private func measureStorage(elapsed: TimeInterval) {
+        let bytes = ScanRecorder.directorySize(directory)
+        let free = (try? URL(fileURLWithPath: NSHomeDirectory())
+            .resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
+            .volumeAvailableCapacityForImportantUsage) ?? nil
+        let estimate = StorageEstimate.estimate(
+            sessionBytes: bytes,
+            elapsedSeconds: elapsed,
+            freeBytes: free ?? 0)
+        storage = estimate
+        // Say it once per level change, not every 30 seconds.
+        if estimate.level != lastStorageLevel {
+            lastStorageLevel = estimate.level
+            if estimate.level != .ok {
+                record(.storageWarning, detail: estimate.message, now: elapsed)
+            }
+        }
+    }
+
+    static func directorySize(_ url: URL) -> Int64 {
+        guard let enumerator = FileManager.default.enumerator(
+            at: url, includingPropertiesForKeys: [.fileSizeKey], options: [.skipsHiddenFiles])
+        else { return 0 }
+        var total: Int64 = 0
+        for case let file as URL in enumerator {
+            total += Int64((try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
+        }
+        return total
     }
 
     // MARK: - Images

@@ -92,6 +92,13 @@ struct ProjectDetailView: View {
                     } label: {
                         ActionTile(title: "Levels", systemImage: "square.3.layers.3d")
                     }
+                    NavigationLink {
+                        ValidationScreen(project: project)
+                    } label: {
+                        ActionTile(title: "Validation", systemImage: "scope",
+                                   badge: SettingsStore.shared.fieldValidationMode ? "ON" : nil,
+                                   tint: SettingsStore.shared.fieldValidationMode ? .orange : .accentColor)
+                    }
                     Button {
                         showJobsite = true
                     } label: {

@@ -3,14 +3,14 @@ import Foundation
 /// CSV schedules for measurements, rooms and takeoff (spec §37).
 public enum CSVExporter {
 
-    static func escape(_ field: String) -> String {
+    public static func escape(_ field: String) -> String {
         if field.contains(",") || field.contains("\"") || field.contains("\n") {
             return "\"" + field.replacingOccurrences(of: "\"", with: "\"\"") + "\""
         }
         return field
     }
 
-    static func row(_ fields: [String]) -> String {
+    public static func row(_ fields: [String]) -> String {
         fields.map(escape).joined(separator: ",") + "\n"
     }
 

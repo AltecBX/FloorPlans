@@ -393,13 +393,33 @@ Stage 3 — presentation, editing, exports, contractor (brief §10, §11, §18�
   the report; JPG and OBJ + MTL exports from the canonical geometry.
 - Documentation, build stamp, device checklist for validating each stage.
 
+Stage 4 — field validation and recovery (build 15). Not an accuracy change:
+the apparatus for measuring accuracy honestly, and for not losing a property
+visit while doing it.
+
+- FieldPlan owns the ARSession and hands it to RoomPlan; world maps are
+  checkpointed and restores are *verified* against an origin anchor rather
+  than assumed.
+- Every accepted room is written to disk at Accept, keyed by RoomPlan's own
+  identifier; Finish Level imports from disk; an unfinished walk is offered
+  back as Continue / Finish With Saved Rooms / Discard.
+- Field Validation Mode: preflight, live sensor diagnostics, storage in
+  minutes remaining, tap-an-element ground truth, problem markers, a field
+  visit checklist and an export bundle.
+- Competing measurements are stored separately and compared, never merged.
+  No arbitration until the data says which method wins.
+
 Still open after stage 3 (in order of value):
 
 - Lane packing where a jogged footprint's chain dimensions collide with
   each other; dimension text collision with fixtures.
 - Per-wall thickness from the mesh (two planes beside one face) for the
   single-face partition the room polygons cannot place.
-- Depth-map capture during RoomPlan (needs a second ARSession run).
+- Depth-map capture during RoomPlan (deliberately not done: it needs a
+  second ARSession, which would compete with the one the scan runs on).
+- Measurement arbitration between RoomPlan, the mesh fit and the canonical
+  value — deferred until the validation dataset from several properties says
+  which is better, and under what conditions.
 - Furniture library pieces for cabinet runs of arbitrary length (today a
   run is one scaled model).
 

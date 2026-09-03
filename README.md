@@ -84,8 +84,10 @@ Every measurement-critical calculation lives in `FieldPlanCore`, which has
 
 ```sh
 cd Packages/FieldPlanCore
-swift test        # 219 unit tests: parser, geometry, wall graph, QA, takeoff, exports,
-                  # scan quality, coverage, evidence, missing-space detection, accuracy stats
+swift test        # 287 unit tests: parser, geometry, wall graph, QA, takeoff, exports,
+                  # scan quality, coverage, evidence, missing-space detection, accuracy stats,
+                  # room checkpoints and recovery, world-map policy, preflight, storage,
+                  # validation dataset and analysis, the field bundle
 ```
 
 The test suite covers the spec's known shapes (10×10, 12×15, L-shape, angled

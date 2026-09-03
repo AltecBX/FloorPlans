@@ -10,6 +10,12 @@ struct DimensionField: View {
     @Binding var meters: Double?
     var formatter: UnitFormatter
     var placeholder: String = "12' 6 1/2\""
+    /// Larger type for a field that is the only thing on a screen — the
+    /// ground-truth entry in field validation mode.
+    var prominent = false
+    /// Opens the keyboard on the field as soon as it appears, so recording a
+    /// measurement is one tap and one number.
+    var autoFocus = false
 
     @State private var text: String = ""
     @State private var isValid = true
@@ -18,9 +24,11 @@ struct DimensionField: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
-                Text(label)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                if !label.isEmpty {
+                    Text(label)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
                 Spacer()
                 if let meters, isValid {
                     Text(formatter.length(meters))
@@ -33,8 +41,10 @@ struct DimensionField: View {
                 .keyboardType(.numbersAndPunctuation)
                 .autocorrectionDisabled()
                 .focused($focused)
-                .font(.title3.monospacedDigit())
-                .padding(10)
+                .font(prominent
+                       ? .system(size: 32, weight: .semibold, design: .rounded).monospacedDigit()
+                       : .title3.monospacedDigit())
+                .padding(prominent ? 14 : 10)
                 .background(
                     RoundedRectangle(cornerRadius: 10)
                         .fill(Color(.tertiarySystemFill))
@@ -50,6 +60,7 @@ struct DimensionField: View {
                     if let meters {
                         text = formatter.length(meters)
                     }
+                    if autoFocus { focused = true }
                 }
                 .accessibilityLabel(label)
         }

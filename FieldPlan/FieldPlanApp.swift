@@ -17,8 +17,8 @@ enum AppInfo {
     /// it — the marketing version alone stays "1.0" forever, so a pull that
     /// silently failed looks identical to one that worked. Both this and
     /// `CURRENT_PROJECT_VERSION` are bumped on every push.
-    static let releaseDate = "September 2, 2026"
-    static let releaseNotes = "Door styles (sliding, pocket, bi-fold, double, garage) drawn and set per door; stairs show their up direction; cabinet runs and islands from the scan; door & window schedule and contractor quantities (paintable area, tile to 7', volume, fixtures) on screen, in CSV and in the report; JPG and OBJ+MTL exports; rotate/rename a level and set north in the editor. Build 13 brought centerline walls with measured thickness, closed corners, face-to-face room sizes, multi-story scans and migration of older projects."
+    static let releaseDate = "September 3, 2026"
+    static let releaseNotes = "Field validation build. Every accepted room is written to disk the moment you tap Accept, so an interrupted walk can be continued or finished from what was saved instead of lost. FieldPlan now owns the AR session and checkpoints the world map, so resuming keeps the same coordinate space — and refuses to merge when it cannot prove that it did. New Field Validation mode: a preflight test before the walk, live sensor diagnostics on screen, storage measured in minutes of recording left, tap-an-element ground truth against a laser, one-tap problem flags, and an export bundle that keeps every method's measurement side by side without averaging any of them. Build 14 brought door styles, stair direction, cabinet runs, the opening schedule and contractor quantities."
 
     /// "1.1 (8)" — the string to quote when reporting a problem.
     static var versionAndBuild: String { "\(version) (\(build))" }

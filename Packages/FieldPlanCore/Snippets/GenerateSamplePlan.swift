@@ -41,7 +41,7 @@ let totalArea = formatter.area(stats.totalFloorArea)
 options.titleBlock = PlanTitleBlock(
     style: .centered,
     summaryLines: [
-        "Total GLA: \(totalArea)  |  Total: \(totalArea)",
+        "Measured Floor Area: \(totalArea)",
         "1st floor: \(totalArea)",
     ],
     projectName: "SAMPLE Apartment",
