@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(/opt/swift/usr/bin/swift test*)",
+      "Bash(/opt/swift/usr/bin/swift build*)",
+      "Bash(/opt/swift/usr/bin/swiftc -parse *)",
+      "mcp__github__pull_request_read"
+    ]
+  }
+}

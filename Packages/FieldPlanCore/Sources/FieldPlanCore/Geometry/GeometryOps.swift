@@ -1,0 +1,395 @@
+import Foundation
+
+/// Segment / polygon primitives used across the wall graph, QA engine and
+/// plan generator. All lengths in meters, plan coordinates (see Vec2 docs).
+public enum GeometryOps {
+
+    // MARK: - Segments
+
+    /// Closest point on segment [a, b] to point p.
+    public static func closestPointOnSegment(_ p: Vec2, _ a: Vec2, _ b: Vec2) -> Vec2 {
+        let ab = b - a
+        let denom = ab.lengthSquared
+        guard denom > 1e-18 else { return a }
+        let t = max(0, min(1, (p - a).dot(ab) / denom))
+        return a + ab * t
+    }
+
+    public static func distanceToSegment(_ p: Vec2, _ a: Vec2, _ b: Vec2) -> Double {
+        p.distance(to: closestPointOnSegment(p, a, b))
+    }
+
+    /// Parameter t in [0,1] of the projection of p onto segment [a, b], clamped.
+    public static func projectedParameter(_ p: Vec2, _ a: Vec2, _ b: Vec2) -> Double {
+        let ab = b - a
+        let denom = ab.lengthSquared
+        guard denom > 1e-18 else { return 0 }
+        return max(0, min(1, (p - a).dot(ab) / denom))
+    }
+
+    /// Intersection of segments [p1,p2] and [p3,p4].
+    /// Returns the intersection point and both parameters when the segments
+    /// properly intersect (including touching endpoints), nil otherwise.
+    public static func segmentIntersection(
+        _ p1: Vec2, _ p2: Vec2, _ p3: Vec2, _ p4: Vec2
+    ) -> (point: Vec2, t: Double, u: Double)? {
+        let r = p2 - p1
+        let s = p4 - p3
+        let denom = r.cross(s)
+        let qp = p3 - p1
+        if abs(denom) < 1e-12 {
+            return nil // parallel or collinear; overlap handled separately
+        }
+        let t = qp.cross(s) / denom
+        let u = qp.cross(r) / denom
+        let eps = 1e-9
+        guard t >= -eps, t <= 1 + eps, u >= -eps, u <= 1 + eps else { return nil }
+        return (p1 + r * t, max(0, min(1, t)), max(0, min(1, u)))
+    }
+
+    /// Intersection of the infinite lines through [p1,p2] and [p3,p4];
+    /// nil when they are parallel.
+    public static func lineIntersection(_ p1: Vec2, _ p2: Vec2, _ p3: Vec2, _ p4: Vec2) -> Vec2? {
+        let r = p2 - p1
+        let s = p4 - p3
+        let denom = r.cross(s)
+        guard abs(denom) > 1e-12 else { return nil }
+        let t = (p3 - p1).cross(s) / denom
+        return p1 + r * t
+    }
+
+    /// True when the two segments are collinear (within angular and lateral
+    /// tolerance) and their spans overlap by more than `minOverlap`.
+    public static func collinearOverlap(
+        _ a1: Vec2, _ a2: Vec2, _ b1: Vec2, _ b2: Vec2,
+        lateralTolerance: Double = 0.05,
+        minOverlap: Double = 0.02
+    ) -> Bool {
+        let dirA = (a2 - a1)
+        let lenA = dirA.length
+        guard lenA > 1e-9 else { return false }
+        let unitA = dirA / lenA
+        // Lateral distance of b endpoints from line A
+        let d1 = abs((b1 - a1).cross(unitA))
+        let d2 = abs((b2 - a1).cross(unitA))
+        guard d1 <= lateralTolerance, d2 <= lateralTolerance else { return false }
+        // Overlap along A's axis
+        let t1 = (b1 - a1).dot(unitA)
+        let t2 = (b2 - a1).dot(unitA)
+        let lo = min(t1, t2)
+        let hi = max(t1, t2)
+        let overlap = min(hi, lenA) - max(lo, 0)
+        return overlap > minOverlap
+    }
+
+    // MARK: - Polygons
+
+    /// Signed area via the shoelace formula. Positive for counter-clockwise
+    /// polygons in plan coordinates. Vertices must not repeat the first point.
+    public static func signedArea(_ polygon: [Vec2]) -> Double {
+        guard polygon.count >= 3 else { return 0 }
+        var sum = 0.0
+        for i in 0..<polygon.count {
+            let a = polygon[i]
+            let b = polygon[(i + 1) % polygon.count]
+            sum += a.cross(b)
+        }
+        return sum / 2
+    }
+
+    public static func area(_ polygon: [Vec2]) -> Double {
+        abs(signedArea(polygon))
+    }
+
+    public static func perimeter(_ polygon: [Vec2]) -> Double {
+        guard polygon.count >= 2 else { return 0 }
+        var sum = 0.0
+        for i in 0..<polygon.count {
+            sum += polygon[i].distance(to: polygon[(i + 1) % polygon.count])
+        }
+        return sum
+    }
+
+    public static func centroid(_ polygon: [Vec2]) -> Vec2 {
+        guard polygon.count >= 3 else {
+            guard !polygon.isEmpty else { return .zero }
+            var sum = Vec2.zero
+            for p in polygon { sum += p }
+            return sum / Double(polygon.count)
+        }
+        let a = signedArea(polygon)
+        guard abs(a) > 1e-12 else {
+            var sum = Vec2.zero
+            for p in polygon { sum += p }
+            return sum / Double(polygon.count)
+        }
+        var cx = 0.0
+        var cy = 0.0
+        for i in 0..<polygon.count {
+            let p = polygon[i]
+            let q = polygon[(i + 1) % polygon.count]
+            let f = p.cross(q)
+            cx += (p.x + q.x) * f
+            cy += (p.y + q.y) * f
+        }
+        return Vec2(cx / (6 * a), cy / (6 * a))
+    }
+
+    /// Ray-casting point-in-polygon test (boundary counts as inside).
+    public static func polygonContains(_ polygon: [Vec2], _ p: Vec2) -> Bool {
+        guard polygon.count >= 3 else { return false }
+        // Boundary check first for robustness.
+        for i in 0..<polygon.count {
+            let a = polygon[i]
+            let b = polygon[(i + 1) % polygon.count]
+            if distanceToSegment(p, a, b) < 1e-9 { return true }
+        }
+        var inside = false
+        var j = polygon.count - 1
+        for i in 0..<polygon.count {
+            let pi = polygon[i]
+            let pj = polygon[j]
+            if (pi.y > p.y) != (pj.y > p.y) {
+                let xCross = (pj.x - pi.x) * (p.y - pi.y) / (pj.y - pi.y) + pi.x
+                if p.x < xCross { inside.toggle() }
+            }
+            j = i
+        }
+        return inside
+    }
+
+    /// Distance along a ray from `origin` in unit `direction` to the first
+    /// polygon edge it crosses, or nil when it never does. Crossings closer
+    /// than `minimum` are ignored so a ray started on an edge looks past it.
+    public static func rayDistance(
+        from origin: Vec2, direction: Vec2, polygon: [Vec2], minimum: Double = 1e-6
+    ) -> Double? {
+        guard polygon.count >= 2 else { return nil }
+        var best: Double? = nil
+        for i in 0..<polygon.count {
+            let a = polygon[i]
+            let b = polygon[(i + 1) % polygon.count]
+            let edge = b - a
+            let denom = direction.cross(edge)
+            guard abs(denom) > 1e-12 else { continue }
+            let ao = a - origin
+            let s = ao.cross(edge) / denom        // along the ray
+            let u = ao.cross(direction) / denom   // along the edge
+            guard s >= minimum, u >= -1e-9, u <= 1 + 1e-9 else { continue }
+            if let current = best, current <= s { continue }
+            best = s
+        }
+        return best
+    }
+
+    /// Strictly inside triangle abc (points on an edge count as outside, so
+    /// a collinear neighbour never blocks an ear).
+    public static func pointInTriangle(_ p: Vec2, _ a: Vec2, _ b: Vec2, _ c: Vec2) -> Bool {
+        let d1 = (b - a).cross(p - a)
+        let d2 = (c - b).cross(p - b)
+        let d3 = (a - c).cross(p - c)
+        let eps = 1e-12
+        let allPositive = d1 > eps && d2 > eps && d3 > eps
+        let allNegative = d1 < -eps && d2 < -eps && d3 < -eps
+        return allPositive || allNegative
+    }
+
+    /// Ear-clipping triangulation of a simple polygon (either winding).
+    /// Returns index triples into `polygon`, counter-clockwise. A polygon the
+    /// clipper cannot resolve (self-intersecting) falls back to a fan so a
+    /// caller always gets something to draw.
+    public static func triangulate(_ polygon: [Vec2]) -> [(Int, Int, Int)] {
+        guard polygon.count >= 3 else { return [] }
+        var indices = Array(0..<polygon.count)
+        if signedArea(polygon) < 0 { indices.reverse() }
+        var result: [(Int, Int, Int)] = []
+        var attempts = 0
+        while indices.count > 3 && attempts < polygon.count * polygon.count + 10 {
+            attempts += 1
+            var clipped = false
+            for i in 0..<indices.count {
+                let i0 = indices[(i + indices.count - 1) % indices.count]
+                let i1 = indices[i]
+                let i2 = indices[(i + 1) % indices.count]
+                let a = polygon[i0], b = polygon[i1], c = polygon[i2]
+                guard (b - a).cross(c - b) > 1e-12 else { continue }   // reflex or flat corner
+                var blocked = false
+                for j in indices where j != i0 && j != i1 && j != i2 {
+                    if pointInTriangle(polygon[j], a, b, c) { blocked = true; break }
+                }
+                if blocked { continue }
+                result.append((i0, i1, i2))
+                indices.remove(at: i)
+                clipped = true
+                break
+            }
+            if !clipped { break }
+        }
+        if indices.count == 3 {
+            result.append((indices[0], indices[1], indices[2]))
+        } else if indices.count > 3 {
+            for k in 1..<(indices.count - 1) {
+                result.append((indices[0], indices[k], indices[k + 1]))
+            }
+        }
+        return result
+    }
+
+    /// Distance from a point to the nearest polygon edge.
+    public static func distanceToPolygonBoundary(_ polygon: [Vec2], _ p: Vec2) -> Double {
+        guard polygon.count >= 2 else { return .greatestFiniteMagnitude }
+        var best = Double.greatestFiniteMagnitude
+        for i in 0..<polygon.count {
+            let a = polygon[i]
+            let b = polygon[(i + 1) % polygon.count]
+            best = min(best, distanceToSegment(p, a, b))
+        }
+        return best
+    }
+
+    /// A point inside the polygon suitable for placing a room label.
+    /// Uses the centroid when it lies inside; otherwise samples a coarse grid
+    /// and returns the interior point farthest from the boundary
+    /// (an inexpensive pole-of-inaccessibility approximation for L-shapes).
+    public static func interiorLabelPoint(_ polygon: [Vec2]) -> Vec2 {
+        let c = centroid(polygon)
+        guard polygon.count >= 3 else { return c }
+        if polygonContains(polygon, c), distanceToPolygonBoundary(polygon, c) > 0.15 {
+            return c
+        }
+        let bounds = Rect2(containing: polygon)
+        guard !bounds.isNull, bounds.width > 0, bounds.height > 0 else { return c }
+        let steps = 24
+        var best = c
+        var bestDist = -Double.greatestFiniteMagnitude
+        for i in 1..<steps {
+            for j in 1..<steps {
+                let p = Vec2(
+                    bounds.minX + bounds.width * Double(i) / Double(steps),
+                    bounds.minY + bounds.height * Double(j) / Double(steps)
+                )
+                guard polygonContains(polygon, p) else { continue }
+                let d = distanceToPolygonBoundary(polygon, p)
+                if d > bestDist {
+                    bestDist = d
+                    best = p
+                }
+            }
+        }
+        return bestDist > 0 ? best : c
+    }
+
+    /// Room dimensions as an oriented bounding box aligned to the polygon's
+    /// longest edge — the "11' 5\" × 12' 0\"" figures shown under room names.
+    /// Returns (extent along the longest edge, perpendicular extent).
+    public static func orientedDimensions(_ polygon: [Vec2]) -> (width: Double, depth: Double)? {
+        guard let extents = orientedExtents(polygon) else { return nil }
+        return (extents.width, extents.depth)
+    }
+
+    /// The oriented bounding box plus `fill`: how much of that box the polygon
+    /// actually occupies (1.0 for a true rectangle, 0.75 for an L-shape missing
+    /// a quarter).
+    ///
+    /// Callers use `fill` to decide whether "W × D" honestly describes a room.
+    /// For an irregular room the same two numbers are *overall extents* only —
+    /// multiplying them would overstate the area — so they must be labelled as
+    /// such or omitted (spec §17: never present a measurement that implies more
+    /// than the geometry supports).
+    public static func orientedExtents(_ polygon: [Vec2]) -> (width: Double, depth: Double, fill: Double)? {
+        let n = polygon.count
+        guard n >= 3 else { return nil }
+        var bestDir = Vec2(1, 0)
+        var bestLength = 0.0
+        for i in 0..<n {
+            let edge = polygon[(i + 1) % n] - polygon[i]
+            let length = edge.length
+            if length > bestLength {
+                bestLength = length
+                bestDir = edge / length
+            }
+        }
+        guard bestLength > 1e-9 else { return nil }
+        let perp = bestDir.perpendicular
+        var minU = Double.greatestFiniteMagnitude
+        var maxU = -Double.greatestFiniteMagnitude
+        var minV = Double.greatestFiniteMagnitude
+        var maxV = -Double.greatestFiniteMagnitude
+        for p in polygon {
+            let u = p.dot(bestDir)
+            let v = p.dot(perp)
+            minU = Swift.min(minU, u)
+            maxU = Swift.max(maxU, u)
+            minV = Swift.min(minV, v)
+            maxV = Swift.max(maxV, v)
+        }
+        let width = maxU - minU
+        let depth = maxV - minV
+        let boxArea = width * depth
+        let fill = boxArea > 1e-9 ? Swift.min(1.0, area(polygon) / boxArea) : 0
+        return (width, depth, fill)
+    }
+
+    /// True when any two non-adjacent edges of the polygon intersect.
+    public static func polygonSelfIntersects(_ polygon: [Vec2]) -> Bool {
+        let n = polygon.count
+        guard n >= 4 else { return false }
+        for i in 0..<n {
+            let a1 = polygon[i]
+            let a2 = polygon[(i + 1) % n]
+            for j in (i + 1)..<n {
+                // Skip adjacent edges (shared vertex).
+                if j == i { continue }
+                let isAdjacent = (j == (i + 1) % n) || ((j + 1) % n == i) || (i == 0 && j == n - 1)
+                if isAdjacent { continue }
+                let b1 = polygon[j]
+                let b2 = polygon[(j + 1) % n]
+                if let hit = segmentIntersection(a1, a2, b1, b2) {
+                    // Ignore touches exactly at shared endpoints.
+                    let eps = 1e-9
+                    let touchesEndpoint =
+                        hit.point.approximatelyEquals(a1, tolerance: eps) ||
+                        hit.point.approximatelyEquals(a2, tolerance: eps) ||
+                        hit.point.approximatelyEquals(b1, tolerance: eps) ||
+                        hit.point.approximatelyEquals(b2, tolerance: eps)
+                    if !touchesEndpoint { return true }
+                }
+            }
+        }
+        return false
+    }
+
+    /// Ensures counter-clockwise winding (positive signed area).
+    public static func counterClockwise(_ polygon: [Vec2]) -> [Vec2] {
+        signedArea(polygon) < 0 ? polygon.reversed() : polygon
+    }
+
+    /// Removes consecutive duplicate points and collinear midpoints.
+    public static func simplified(_ polygon: [Vec2], tolerance: Double = 1e-6) -> [Vec2] {
+        guard polygon.count >= 3 else { return polygon }
+        var pts: [Vec2] = []
+        for p in polygon {
+            if let last = pts.last, last.approximatelyEquals(p, tolerance: tolerance) { continue }
+            pts.append(p)
+        }
+        if let first = pts.first, let last = pts.last,
+           first.approximatelyEquals(last, tolerance: tolerance), pts.count > 1 {
+            pts.removeLast()
+        }
+        guard pts.count >= 3 else { return pts }
+        var out: [Vec2] = []
+        let n = pts.count
+        for i in 0..<n {
+            let prev = pts[(i + n - 1) % n]
+            let cur = pts[i]
+            let next = pts[(i + 1) % n]
+            let v1 = (cur - prev).normalized
+            let v2 = (next - cur).normalized
+            if abs(v1.cross(v2)) < 1e-9 && v1.dot(v2) > 0 {
+                continue // collinear pass-through point
+            }
+            out.append(cur)
+        }
+        return out.count >= 3 ? out : pts
+    }
+}
