@@ -378,7 +378,9 @@ private struct SceneKitContainer: UIViewRepresentable {
                 controller.target = SCNVector3(frame.center.x, frame.center.y, frame.center.z)
                 // Never orbit under the floor.
                 controller.minimumVerticalAngle = 3
-                controller.maximumVerticalAngle = 89.8
+                // Just past where the Top view starts, so the first drag
+                // does not snap it.
+                controller.maximumVerticalAngle = 89.95
             case .walk:
                 controller.interactionMode = .fly
                 controller.minimumVerticalAngle = -80

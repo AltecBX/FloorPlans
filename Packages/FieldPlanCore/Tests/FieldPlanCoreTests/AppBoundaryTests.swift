@@ -1,5 +1,5 @@
 import XCTest
-@testable import FieldPlanCore
+import FieldPlanCore
 
 /// A compile fence for the app→core boundary.
 ///
@@ -11,6 +11,10 @@ import XCTest
 ///
 /// It asserts almost nothing about behaviour on purpose: the other suites do
 /// that. When the app starts calling something new, add the call here.
+///
+/// A plain `import`, not `@testable`: the app sees only the public API, so
+/// this file must too, or an internal initialiser compiles here and fails
+/// in Xcode.
 final class AppBoundaryTests: XCTestCase {
 
     func testCallsTheAppMakes() throws {
@@ -134,6 +138,8 @@ final class AppBoundaryTests: XCTestCase {
         build.cutHeight = Optional(1.2)
         build.doorsOpen = true
         build.includeCeilings = false
+        let empty = DollhouseModel(levels: [])
+        XCTAssertNil(empty.bounds)
         let model: DollhouseModel = DollhouseBuilder.build(levels: levels, options: build)
         let _: (min: Vec3, max: Vec3)? = model.bounds
         for built in model.levels {

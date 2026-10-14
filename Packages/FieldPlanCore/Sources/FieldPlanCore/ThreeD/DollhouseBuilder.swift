@@ -57,6 +57,10 @@ public struct DollhouseModel: Sendable {
 
     public var levels: [Level]
 
+    public init(levels: [Level]) {
+        self.levels = levels
+    }
+
     public var bounds: (min: Vec3, max: Vec3)? {
         DollhouseModel.union(levels.compactMap(\.bounds))
     }

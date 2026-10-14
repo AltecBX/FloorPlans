@@ -13,8 +13,10 @@ enum ThreeDSnapshot {
     /// Renders levels to an image on a white background. Returns nil when
     /// there is no geometry or the device has no Metal support.
     ///
-    /// Rendered at twice the size and scaled down, on top of 4× multisampling,
-    /// so trim, window bars and wall edges stay crisp in a printed report.
+    /// Rendered at one and a half times the size and scaled down, on top of
+    /// 4× multisampling, so trim, window bars and wall edges stay crisp in a
+    /// printed report — without the GPU memory a full 2× render would take
+    /// for every level of every sheet.
     static func render(
         levels: [LevelGeometry],
         mode: PlanRenderMode = .existing,
@@ -43,7 +45,7 @@ enum ThreeDSnapshot {
         // The scene lights itself; the headlight would flatten the shadows.
         renderer.autoenablesDefaultLighting = false
 
-        let supersample: CGFloat = 2
+        let supersample: CGFloat = 1.5
         let large = renderer.snapshot(
             atTime: 0,
             with: CGSize(width: size.width * supersample, height: size.height * supersample),
