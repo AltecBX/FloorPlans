@@ -213,6 +213,35 @@ destructive on purpose: the point is to prove a scan cannot be lost.
     no decimal — with each floor listed under it when you scanned more
     than one.
 
+## Build 17 — the 3D model
+
+51. **Corners**: open 3D on a scanned apartment. Turn the model slowly.
+    Every wall corner should be one clean solid corner — no notch on the
+    outside, no flickering on the tops. Report any corner that looks broken.
+52. **Doors**: each hinged door should stand open into the room it swings
+    into (the same side as the arc on the 2D plan), with a handle. Tap one:
+    it should say its style and size. Turn **Doors Open** off in the menu —
+    they should close into their openings.
+53. **Windows**: frames, glass you can see through, a sill inside and out.
+    On an outside wall the window should sit toward the outside.
+54. **Views**: try **Dollhouse**, **Top** and **Walk**. Walk should put you
+    at eye height inside the biggest room with the ceiling on — drag to
+    look around, two fingers to move.
+55. **Cutaway**: drag the wall slider down. Walls should get shorter with a
+    dark cut top; furniture must keep its shape (it used to get squashed).
+56. **Wall-hung things**: scan a kitchen with upper cabinets and a bathroom
+    with a mirror. They should hang on the wall at the height they really
+    are, not sit on the floor.
+57. **Floors**: with more than one floor scanned, pick each in the floor
+    menu; **All Floors** should look like one building, not floating trays.
+58. **Plan modes**: in the menu, switch Existing / Proposed / Demolition /
+    Overlay on a project with changes. Demolition = red, new = blue.
+59. **Exports**: Export → 3D PNG, and a report with the 3D page. The house
+    should be crisp, with soft shadows on a white page. Open the OBJ in any
+    3D viewer — it should match what the app shows.
+60. **Speed**: on a big plan, dragging the wall slider should stay smooth.
+    If it stutters, tell me how many rooms the plan has.
+
 ## Known limitations to verify/accept
 
 - Rooms scanned in *separate* sessions do not share a coordinate space; they

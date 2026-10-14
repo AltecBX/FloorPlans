@@ -121,8 +121,51 @@ enum FurnitureLibrary {
         // then covers the whole model rather than just the root's own mesh,
         // and drawing is much cheaper when the piece repeats.
         let flattened = container.flattenedClone()
+        flattened.enumerateHierarchy { node, _ in
+            node.geometry?.materials.forEach(restyle)
+        }
         cache[category] = flattened
         return flattened
+    }
+
+    /// Gives a downloaded model's flat colours physically based finishes in
+    /// the dollhouse palette.
+    ///
+    /// The bundled models name their materials by what they are made of
+    /// (`wood`, `carpet` for upholstery, `metalDark`, `glass`…) but colour
+    /// them like toys — a red sofa, orange wood. Matching on the name keeps
+    /// every model's parts distinct while making them read as oak, linen,
+    /// brushed metal and glass under the scene's light.
+    static func restyle(_ material: SCNMaterial) {
+        let name = (material.name ?? "").lowercased()
+        material.lightingModel = .physicallyBased
+        material.metalness.contents = 0.0
+        func set(_ r: CGFloat, _ g: CGFloat, _ b: CGFloat, roughness: Double, metalness: Double = 0) {
+            material.diffuse.contents = UIColor(red: r, green: g, blue: b, alpha: 1)
+            material.roughness.contents = roughness
+            material.metalness.contents = metalness
+        }
+        if name.contains("glass") {
+            set(0.80, 0.88, 0.92, roughness: 0.05)
+            material.transparency = 0.3
+            material.transparencyMode = .dualLayer
+        } else if name.contains("metaldark") {
+            set(0.28, 0.29, 0.31, roughness: 0.35, metalness: 0.9)
+        } else if name.contains("metallight") {
+            set(0.82, 0.83, 0.85, roughness: 0.3, metalness: 0.9)
+        } else if name.contains("metal") {
+            set(0.62, 0.63, 0.65, roughness: 0.3, metalness: 0.9)
+        } else if name.contains("wooddark") {
+            set(0.40, 0.29, 0.21, roughness: 0.55)
+        } else if name.contains("wood") {
+            set(0.68, 0.52, 0.37, roughness: 0.55)
+        } else if name.contains("carpetwhite") {
+            set(0.93, 0.92, 0.89, roughness: 0.95)
+        } else if name.contains("carpet") || name.contains("fabric") {
+            set(0.70, 0.66, 0.60, roughness: 0.95)
+        } else {
+            set(0.93, 0.92, 0.90, roughness: 0.55)
+        }
     }
 
     private static func url(for category: FixtureCategory) -> URL? {

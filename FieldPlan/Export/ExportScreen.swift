@@ -211,7 +211,9 @@ struct ExportScreen: View {
 
     private func export3DPNG() throws -> URL {
         let level = try requireLevel()
-        let renderMode: PlanRenderMode = mode == .demolition ? .existing : mode
+        // Every plan mode has a 3D look now: demolition shows what comes
+        // down in red, overlay shows both.
+        let renderMode: PlanRenderMode = mode
         guard let image = ThreeDSnapshot.render(levels: [level], mode: renderMode, showFurniture: includeFurniture || includeFixtures),
               let data = image.pngData() else {
             throw ProjectStore.StoreError.importUnreadable("3D rendering is unavailable on this device.")
@@ -235,7 +237,9 @@ struct ExportScreen: View {
 
     private func export3DJPG() throws -> URL {
         let level = try requireLevel()
-        let renderMode: PlanRenderMode = mode == .demolition ? .existing : mode
+        // Every plan mode has a 3D look now: demolition shows what comes
+        // down in red, overlay shows both.
+        let renderMode: PlanRenderMode = mode
         guard let image = ThreeDSnapshot.render(levels: [level], mode: renderMode, showFurniture: includeFurniture || includeFixtures),
               let data = image.jpegData(compressionQuality: 0.9) else {
             throw ProjectStore.StoreError.importUnreadable("3D rendering is unavailable on this device.")

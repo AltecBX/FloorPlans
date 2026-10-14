@@ -403,6 +403,9 @@ public struct FixtureItem: Codable, Hashable, Identifiable, Sendable {
     public var source: MeasurementSource
     public var confidence: CaptureConfidence
     public var evidence: ElementEvidence?
+    /// Underside above the finished floor (metres), as scanned. Nil for older
+    /// scans and hand-placed items, which use the category's usual height.
+    public var elevation: Double?
 
     public init(
         id: UUID = UUID(),
@@ -416,7 +419,8 @@ public struct FixtureItem: Codable, Hashable, Identifiable, Sendable {
         changeStatus: ChangeStatus = .existing,
         source: MeasurementSource = .manualEntry,
         confidence: CaptureConfidence = .medium,
-        evidence: ElementEvidence? = nil
+        evidence: ElementEvidence? = nil,
+        elevation: Double? = nil
     ) {
         self.id = id
         self.category = category
@@ -430,6 +434,7 @@ public struct FixtureItem: Codable, Hashable, Identifiable, Sendable {
         self.source = source
         self.confidence = confidence
         self.evidence = evidence
+        self.elevation = elevation
     }
 
     public var displayName: String { label ?? category.displayName }

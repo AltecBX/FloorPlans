@@ -656,7 +656,10 @@ public enum ScanConversion {
                         ? room.id : nil,
                     changeStatus: .existing,
                     source: .lidarScanned,
-                    confidence: object.confidenceLevel >= 2 ? .high : (object.confidenceLevel == 1 ? .medium : .low)
+                    confidence: object.confidenceLevel >= 2 ? .high : (object.confidenceLevel == 1 ? .medium : .low),
+                    // Where the box's underside was found, so an upper cabinet
+                    // or a wall TV is drawn at its height in 3D.
+                    elevation: max(0, object.center.y - object.dimensions.y / 2 - floorY)
                 )
                 result.fixtures.append(fixture)
             }

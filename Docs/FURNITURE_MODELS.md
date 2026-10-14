@@ -51,6 +51,18 @@ You do not need to size models correctly. Two things it cannot guess:
   mirrors and TVs are fitted uniformly instead. Change that per category with
   `Adjustment(uniform: true/false)`.
 
+**Height comes from the scan.** A model is stood at the height its scanned
+box was found — an upper cabinet, a range hood, a mirror or a TV hangs on
+the wall where it was. Pieces placed by hand, and scans from before build
+17, use the category's usual mounting height (`FixtureMounting`).
+
+**Finishes come from material names.** Whatever colours a model ships with,
+its materials are given physically based finishes by name: anything named
+`wood`/`woodDark` becomes oak/walnut, `carpet`/`fabric` upholstery,
+`carpetWhite` linen, `metal`/`metalDark`/`metalLight` brushed metal, `glass`
+glass, and everything else satin white (`FurnitureLibrary.restyle`). Name a
+model's materials that way and it will match the rest of the house.
+
 Keep models reasonably light — a few thousand triangles each is plenty for a
 dollhouse view, and a scan can contain a dozen chairs.
 

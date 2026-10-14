@@ -2,11 +2,13 @@ import Foundation
 
 // MARK: - OBJ export (brief §19)
 //
-// A Wavefront OBJ of the canonical model: the same walls, floor slabs and
-// fixtures the 3D viewer builds, written straight from `LevelGeometry` so
-// the file matches the plan to the millimetre and depends on no rendering
-// framework. Metres, Y up; plan +y becomes −z, as in the viewer. Materials
-// are flat colours in a companion MTL.
+// A Wavefront OBJ of the canonical model, written from the same dollhouse
+// geometry the 3D viewer draws (`DollhouseBuilder`) — mitred corners, door
+// and window openings with their leaves, frames, glass and trim, floors by
+// room — so the file matches the viewer and the plan to the millimetre and
+// depends on no rendering framework. Metres, Y up; plan +y becomes −z.
+// Materials are flat colours in a companion MTL; new and demolished work get
+// their own tinted materials, as on the 2D plan.
 
 public enum OBJExporter {
 
@@ -14,8 +16,9 @@ public enum OBJExporter {
         public var mode: PlanRenderMode = .existing
         public var includeFixtures = true
         public var includeFurniture = true
-        /// Story spacing when a level has no scanned floor height.
-        public var levelSpacing = 3.4
+        /// Story spacing when a level has no scanned floor height; nil stacks
+        /// each story on the walls below it, as the viewer does.
+        public var levelSpacing: Double?
         public var materialFileName = "fieldplan.mtl"
         /// Floor slab thickness below the finished floor.
         public var slabThickness = 0.08
@@ -28,38 +31,38 @@ public enum OBJExporter {
     }
 
     public static func export(levels: [LevelGeometry], options: Options = Options()) -> Output {
+        var build = DollhouseBuilder.Options()
+        build.mode = options.mode
+        build.levelSpacing = options.levelSpacing
+        build.slabThickness = options.slabThickness
+        build.includeFixtures = options.includeFixtures
+        build.includeFurniture = options.includeFurniture
+        let model = DollhouseBuilder.build(levels: levels, options: build)
+
         var writer = Writer()
         writer.line("# Jerry FieldPlans model — metres, Y up, plan north is -Z")
         writer.line("mtllib \(options.materialFileName)")
-        let measured = levels.count > 1 && levels.allSatisfy { $0.elevation != nil }
-        let lowest = levels.compactMap(\.elevation).min() ?? 0
-        for level in levels.sorted(by: { $0.storyIndex < $1.storyIndex }) {
-            let base = measured
-                ? (level.elevation ?? 0) - lowest
-                : Double(level.storyIndex) * options.levelSpacing
+        var used: [String: (DollhouseMaterial, DollhouseTint)] = [:]
+        for level in model.levels {
             writer.line("g \(safe(level.name))")
-            for wall in level.walls where included(wall.changeStatus, options.mode) {
-                writer.wall(wall, base: base, mode: options.mode)
-            }
-            for room in level.rooms where room.polygon.count >= 3 && included(room.changeStatus, options.mode) {
-                writer.floor(room, base: base, slab: options.slabThickness)
-            }
-            for fixture in level.fixtures where included(fixture.changeStatus, options.mode) {
-                if fixture.category.isFurniture {
-                    guard options.includeFurniture else { continue }
-                } else {
-                    guard options.includeFixtures else { continue }
+            for element in level.elements where !element.mesh.isEmpty {
+                writer.line("o \(element.kind.rawValue)_\(element.id.uuidString.prefix(8))")
+                let offset = writer.vertices(element.mesh.positions)
+                for sub in element.mesh.submeshes where !sub.indices.isEmpty {
+                    let name = materialName(sub.material, element.tint)
+                    used[name] = (sub.material, element.tint)
+                    writer.material(name)
+                    var i = 0
+                    while i + 2 < sub.indices.count {
+                        writer.face([offset + Int(sub.indices[i]),
+                                     offset + Int(sub.indices[i + 1]),
+                                     offset + Int(sub.indices[i + 2])])
+                        i += 3
+                    }
                 }
-                writer.fixture(fixture, base: base)
             }
         }
-        return Output(obj: writer.text, mtl: materials)
-    }
-
-    /// Whether an element with `status` appears in a model of `mode` — the
-    /// same rule the 2D plan applies.
-    static func included(_ status: ChangeStatus, _ mode: PlanRenderMode) -> Bool {
-        PlanGenerator.includeElement(status, mode: mode)
+        return Output(obj: writer.text, mtl: materials(used))
     }
 
     static func safe(_ name: String) -> String {
@@ -67,56 +70,62 @@ public enum OBJExporter {
         return String(cleaned).isEmpty ? "level" : String(cleaned)
     }
 
-    static let materials = """
-    # Jerry FieldPlans materials
-    newmtl wall
-    Kd 0.92 0.91 0.88
-    Ka 0.92 0.91 0.88
-    newmtl wall_demolished
-    Kd 0.85 0.32 0.30
-    Ka 0.85 0.32 0.30
-    newmtl wall_new
-    Kd 0.30 0.52 0.86
-    Ka 0.30 0.52 0.86
-    newmtl floor
-    Kd 0.80 0.74 0.62
-    Ka 0.80 0.74 0.62
-    newmtl fixture
-    Kd 0.85 0.87 0.90
-    Ka 0.85 0.87 0.90
-    newmtl furniture
-    Kd 0.70 0.66 0.60
-    Ka 0.70 0.66 0.60
-
-    """
-
-    /// Typical height and bottom offset (metres) when a fixture carries no
-    /// scanned height; wall-hung items start above the floor.
-    static func heightAndBottom(for category: FixtureCategory) -> (height: Double, bottom: Double) {
-        switch category {
-        case .bathtub: return (0.55, 0)
-        case .shower: return (2.0, 0)
-        case .toilet: return (0.75, 0)
-        case .sink, .vanity: return (0.85, 0)
-        case .cabinetBase, .countertop, .island, .stove, .oven, .dishwasher, .washerDryer: return (0.9, 0)
-        case .cabinetUpper: return (0.75, 1.4)
-        case .refrigerator: return (1.8, 0)
-        case .rangeHood: return (0.5, 1.5)
-        case .radiator: return (0.6, 0.1)
-        case .fireplace: return (1.0, 0)
-        case .stairs: return (2.6, 0)
-        case .column: return (2.4, 0)
-        case .bed: return (0.55, 0)
-        case .sofa: return (0.8, 0)
-        case .chair: return (0.9, 0)
-        case .table: return (0.75, 0)
-        case .storage: return (1.8, 0)
-        case .television: return (0.7, 0.9)
-        case .medicineCabinet: return (0.7, 1.3)
-        case .mirror: return (0.9, 1.0)
-        case .soffit: return (0.3, 2.1)
-        case .custom: return (0.9, 0)
+    static func materialName(_ material: DollhouseMaterial, _ tint: DollhouseTint) -> String {
+        switch tint {
+        case .none: return material.name
+        case .new: return material.name + "_new"
+        case .demolish: return material.name + "_demolished"
         }
+    }
+
+    /// Flat colours, close to the viewer's look.
+    static func colour(_ material: DollhouseMaterial) -> (Double, Double, Double) {
+        switch material {
+        case .wall: return (0.92, 0.91, 0.88)
+        case .wallCap: return (0.36, 0.37, 0.39)
+        case .floor(.wood): return (0.72, 0.56, 0.40)
+        case .floor(.tile): return (0.86, 0.86, 0.84)
+        case .floor(.carpet): return (0.74, 0.71, 0.66)
+        case .floor(.concrete): return (0.62, 0.62, 0.60)
+        case .floor(.stone): return (0.66, 0.63, 0.58)
+        case .threshold: return (0.62, 0.48, 0.34)
+        case .baseboard, .trim, .windowFrame: return (0.96, 0.96, 0.94)
+        case .ceiling: return (0.97, 0.97, 0.96)
+        case .doorLeaf: return (0.93, 0.92, 0.89)
+        case .hardware: return (0.55, 0.56, 0.58)
+        case .glass: return (0.70, 0.83, 0.90)
+        case .windowSill: return (0.90, 0.89, 0.86)
+        case .fixture: return (0.85, 0.87, 0.90)
+        case .furniture: return (0.70, 0.66, 0.60)
+        }
+    }
+
+    static func materials(_ used: [String: (DollhouseMaterial, DollhouseTint)]) -> String {
+        var text = "# Jerry FieldPlans materials\n"
+        for name in used.keys.sorted() {
+            guard let (material, tint) = used[name] else { continue }
+            var (r, g, b) = colour(material)
+            let target: (Double, Double, Double)?
+            switch tint {
+            case .none: target = nil
+            case .new: target = (0.30, 0.52, 0.86)
+            case .demolish: target = (0.85, 0.32, 0.30)
+            }
+            if let target {
+                // Walls take the plan's colour outright; trim and the rest
+                // lean toward it so the detail still reads.
+                let t = material == .wall ? 1.0 : 0.65
+                r += (target.0 - r) * t
+                g += (target.1 - g) * t
+                b += (target.2 - b) * t
+            }
+            let rgb = String(format: "%.2f %.2f %.2f", r, g, b)
+            text += "newmtl \(name)\nKd \(rgb)\nKa \(rgb)\n"
+            if material == .glass {
+                text += "d 0.35\nTr 0.65\n"
+            }
+        }
+        return text + "\n"
     }
 
     // MARK: Writer
@@ -137,101 +146,18 @@ public enum OBJExporter {
             currentMaterial = name
         }
 
-        mutating func vertex(_ p: Vec2, y: Double) -> Int {
-            line(String(format: "v %.4f %.4f %.4f", p.x, y, -p.y))
-            vertexCount += 1
-            return vertexCount
+        /// Writes the points and returns the 1-based index of the first.
+        mutating func vertices(_ points: [Vec3]) -> Int {
+            let first = vertexCount + 1
+            for p in points {
+                line(String(format: "v %.4f %.4f %.4f", p.x, p.y, p.z))
+            }
+            vertexCount += points.count
+            return first
         }
 
         mutating func face(_ ids: [Int]) {
             line("f " + ids.map(String.init).joined(separator: " "))
-        }
-
-        /// A solid with a plan footprint between two heights: top and bottom
-        /// triangulated (so an L-shaped floor is fine), one quad per side,
-        /// all faces wound outward.
-        mutating func prism(_ footprint: [Vec2], bottom: Double, top: Double) {
-            guard footprint.count >= 3, top - bottom > 1e-6 else { return }
-            let polygon = GeometryOps.counterClockwise(footprint)
-            let lower = polygon.map { vertex($0, y: bottom) }
-            let upper = polygon.map { vertex($0, y: top) }
-            for (a, b, c) in GeometryOps.triangulate(polygon) {
-                face([upper[a], upper[b], upper[c]])
-                face([lower[c], lower[b], lower[a]])
-            }
-            for i in 0..<polygon.count {
-                let j = (i + 1) % polygon.count
-                face([lower[i], lower[j], upper[j], upper[i]])
-            }
-        }
-
-        mutating func wall(_ wall: Wall, base: Double, mode: PlanRenderMode) {
-            let length = wall.length
-            guard length > 0.02 else { return }
-            let name: String
-            switch wall.changeStatus {
-            case .demolish where mode == .demolition || mode == .overlay: name = "wall_demolished"
-            case .new where mode == .proposed || mode == .overlay: name = "wall_new"
-            default: name = "wall"
-            }
-            line("o wall_\(wall.id.uuidString.prefix(8))")
-            material(name)
-            let dir = wall.direction
-            let perp = dir.perpendicular
-            let ht = max(wall.thickness, 0.02) / 2
-
-            func box(from: Double, to: Double, bottom: Double, top: Double) {
-                guard to - from > 0.01, top - bottom > 0.01 else { return }
-                let p1 = wall.start + dir * from
-                let p2 = wall.start + dir * to
-                prism([p1 - perp * ht, p2 - perp * ht, p2 + perp * ht, p1 + perp * ht],
-                      bottom: base + bottom, top: base + top)
-            }
-
-            let openings = wall.openings
-                .filter { OBJExporter.included($0.changeStatus, mode) }
-                .sorted { $0.startOffset < $1.startOffset }
-            var cursor = 0.0
-            for opening in openings {
-                let start = max(0, opening.startOffset)
-                let end = min(length, opening.endOffset)
-                if start > cursor { box(from: cursor, to: start, bottom: 0, top: wall.height) }
-                let headTop = opening.sillHeight + opening.height
-                if headTop < wall.height { box(from: start, to: end, bottom: headTop, top: wall.height) }
-                if opening.sillHeight > 0.02 { box(from: start, to: end, bottom: 0, top: opening.sillHeight) }
-                cursor = max(cursor, end)
-            }
-            if cursor < length { box(from: cursor, to: length, bottom: 0, top: wall.height) }
-        }
-
-        mutating func floor(_ room: RoomShape, base: Double, slab: Double) {
-            line("o floor_\(OBJExporter.safe(room.name))_\(room.id.uuidString.prefix(8))")
-            material("floor")
-            prism(room.polygon, bottom: base - slab, top: base)
-        }
-
-        mutating func fixture(_ fixture: FixtureItem, base: Double) {
-            let defaults = OBJExporter.heightAndBottom(for: fixture.category)
-            let height = fixture.height ?? defaults.height
-            line("o \(fixture.category.rawValue)_\(fixture.id.uuidString.prefix(8))")
-            material(fixture.category.isFurniture ? "furniture" : "fixture")
-            if fixture.category == .stairs {
-                // Solid steps rising toward the fixture's local +y, the way
-                // the plan symbol's arrow points.
-                let w = fixture.size.x
-                let d = fixture.size.y
-                let treads = max(2, Int(d / 0.28))
-                func local(_ x: Double, _ y: Double) -> Vec2 { Vec2(x, y).rotated(by: fixture.rotation) + fixture.center }
-                for i in 0..<treads {
-                    let y0 = -d / 2 + d * Double(i) / Double(treads)
-                    let y1 = -d / 2 + d * Double(i + 1) / Double(treads)
-                    let top = height * Double(i + 1) / Double(treads)
-                    prism([local(-w / 2, y0), local(w / 2, y0), local(w / 2, y1), local(-w / 2, y1)],
-                          bottom: base, top: base + top)
-                }
-                return
-            }
-            prism(fixture.corners, bottom: base + defaults.bottom, top: base + defaults.bottom + height)
         }
     }
 }

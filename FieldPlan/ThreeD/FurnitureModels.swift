@@ -288,12 +288,35 @@ enum FurnitureModels {
         return root
     }
 
+    private static var materials: [UIColor: SCNMaterial] = [:]
+
+    /// One shared material per colour, finished like what the colour stands
+    /// for: glazed porcelain, brushed metal, a glossy screen, matte fabric.
     private static func material(_ color: UIColor) -> SCNMaterial {
+        if let cached = materials[color] { return cached }
         let material = SCNMaterial()
         material.diffuse.contents = color
         material.lightingModel = .physicallyBased
-        material.roughness.contents = 0.85
-        material.metalness.contents = 0.0
+        var roughness = 0.8
+        var metalness = 0.0
+        switch color {
+        case Palette.porcelain: roughness = 0.16
+        case Palette.metal: roughness = 0.3; metalness = 1
+        case Palette.appliance: roughness = 0.32; metalness = 0.7
+        case Palette.screen: roughness = 0.12
+        case Palette.counter: roughness = 0.28
+        case Palette.wood, Palette.darkWood: roughness = 0.55
+        case Palette.cabinet: roughness = 0.4
+        case Palette.linen, Palette.cushion, Palette.upholstery: roughness = 0.95
+        case Palette.glass:
+            roughness = 0.05
+            material.transparency = 0.3
+            material.transparencyMode = .dualLayer
+        default: break
+        }
+        material.roughness.contents = roughness
+        material.metalness.contents = metalness
+        materials[color] = material
         return material
     }
 }

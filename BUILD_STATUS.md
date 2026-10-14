@@ -1,6 +1,79 @@
 # BUILD STATUS
 
-_Last updated: 2026-09-03_
+_Last updated: 2026-10-14_
+
+## 2026-10-14 — Build 17 (version 1.7): a 3D model worth showing
+
+The 3D view used to be one box per wall segment and a hole where each door
+and window was. Corners had notches outside and overlapping, flickering
+tops inside; doors and windows were empty holes; furniture was squashed by
+the cutaway slider and wall-hung pieces sat on the floor. This build
+replaces the geometry and the rendering.
+
+**Geometry now lives in the core** (`FieldPlanCore/ThreeD/`), as plain
+triangles with a material per surface, so the viewer, the report picture
+and the OBJ export are the same model and all of it is tested on Linux:
+
+- **Walls meet cleanly** (`WallJoints`). Two walls at a corner are mitred;
+  three or more share the junction in wedges; a wall ending against the
+  side of another (a T never split) stops at its face; a free end is
+  square. Tests prove the tops tile the walls' union exactly — no overlap,
+  no notch — and that a wall's end shows only above a lower neighbour.
+- **Openings are built, not just cut** (`DollhouseWalls`,
+  `DollhouseOpenings`): jambs, heads and sills from the measured opening;
+  a door saddle; hinged and double doors drawn open 90° on the side the
+  plan says they swing, with lever handles; sliding (glass on an outside
+  wall), pocket, bi-fold and sectional garage doors; windows set toward the
+  outside face with a frame, glass, mullions under a metre apart and a
+  meeting rail; casings on both faces; a stool and apron inside and a sill
+  nose outside.
+- **Baseboards** on every face that looks into a room, mitred at corners
+  and stopping at door casings.
+- **Floors by room** (`FloorFinish`): oak, tile, carpet, concrete or stone,
+  planks laid along the room's longest wall. Texture coordinates are in
+  metres, so a plank is 15 cm and a tile 30 cm in any room.
+- **A real cutaway**: walls are rebuilt at the cut height with a dark cut
+  top (the section), windows and doors clipped with them; furniture is
+  untouched.
+- **Stories stack as a building** (`DollhouseBuilder.placements`): measured
+  floor heights when every level has one, otherwise each story stands on
+  the tallest wall below plus a 30 cm floor structure, the slab filling it.
+  The old fixed 3.4 m spacing left upper floors floating.
+- **Furniture at its scanned height** (`FixtureItem.elevation`, set from
+  the scanned box's underside; `FixtureMounting`): upper cabinets, range
+  hoods, mirrors and TVs on the wall where they were found. Older scans
+  use the category's usual height. Stairs are now full height (were 0.2 m).
+- Every mode follows the 2D plan's rule (`PlanGenerator.includeElement`,
+  now public; `DollhouseTint`): existing draws a wall to be demolished as
+  it stands, demolition tints it red, proposed tints new work blue,
+  overlay shows both.
+- **OBJ export** writes this model: mitred walls, doors, frames, glass and
+  trim, floors by finish, tinted materials for new and demolished work.
+
+**Rendering** (`SceneStyling`, `DollhouseScene`): physically based
+materials for every surface; procedural 1024 px textures at real scale with
+mipmaps and anisotropic filtering; a sun aimed at the model with a 4096 px
+shadow map sized to the house (it was left at the origin before); a cool
+fill; a proper equirectangular sky for image-based light; screen-space
+ambient occlusion; an invisible ground that shows only the house's shadow;
+glass that lets the sun through. Downloaded furniture models get real
+finishes by material name (oak, linen, brushed metal, glass) instead of
+toy colours.
+
+**Viewer**: Dollhouse, Top and Walk (eye height, inside the largest room,
+ceilings on) views; a floor picker; room names and areas over each room;
+all four plan modes; doors open/closed; re-centre; tap a door or window for
+its style and size. The report and export pictures are rendered at twice
+the size and scaled down for crisp trim.
+
+- Core suite: **319 tests**, all passing on Linux (`DollhouseBuilderTests`
+  added; `AppBoundaryTests` fences the new app→core calls). Every app file
+  parses. The model was rendered headlessly and inspected from outside,
+  cut away, stacked, and close up at a door and a window.
+- **Not verified here:** the iOS target cannot be compiled in this
+  environment, and the SceneKit look (shadows, ambient occlusion, sky
+  light) can only be judged on the phone. The Xcode build must be
+  confirmed on the owner's Mac.
 
 ## 2026-09-03 — Build 16 (version 1.6): the plan reads like a floor plan
 

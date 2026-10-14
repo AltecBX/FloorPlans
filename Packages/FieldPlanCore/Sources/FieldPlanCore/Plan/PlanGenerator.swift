@@ -91,7 +91,9 @@ public enum PlanGenerator {
 
     // MARK: - Element inclusion by mode
 
-    static func includeElement(_ status: ChangeStatus, mode: PlanRenderMode) -> Bool {
+    /// Whether an element with `status` is drawn in `mode` — one rule for the
+    /// 2D plan, the 3D model and every export.
+    public static func includeElement(_ status: ChangeStatus, mode: PlanRenderMode) -> Bool {
         switch mode {
         case .existing:
             return status != .new

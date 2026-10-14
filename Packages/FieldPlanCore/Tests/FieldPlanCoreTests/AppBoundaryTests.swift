@@ -128,11 +128,62 @@ final class AppBoundaryTests: XCTestCase {
         try ZipArchive.write(entries: entries, to: url)
         try? FileManager.default.removeItem(at: url)
 
-        // ThreeDSceneBuilder: measured stacking
-        let measured = levels.count > 1 && levels.allSatisfy { $0.elevation != nil }
-        let lowest = levels.compactMap(\.elevation).min() ?? 0
-        for l in levels.sorted(by: { $0.storyIndex < $1.storyIndex }) {
-            let _: Double = measured ? (l.elevation ?? 0) - lowest : Double(l.storyIndex) * 3.4
+        // DollhouseScene: the 3D model, its nodes, framing and furniture
+        var build = DollhouseBuilder.Options()
+        build.mode = .overlay
+        build.cutHeight = Optional(1.2)
+        build.doorsOpen = true
+        build.includeCeilings = false
+        let model: DollhouseModel = DollhouseBuilder.build(levels: levels, options: build)
+        let _: (min: Vec3, max: Vec3)? = model.bounds
+        for built in model.levels {
+            let _: UUID = built.id
+            let _: Double = built.floorHeight
+            let _: (min: Vec3, max: Vec3)? = built.bounds
+            for element in built.elements {
+                let _: String = "\(element.kind.rawValue):\(element.id.uuidString)"
+                let _: DollhouseTint = element.tint
+                let mesh: DollhouseMesh = element.mesh
+                let _: Bool = mesh.isEmpty
+                let _: [Vec3] = mesh.positions
+                let _: [Vec3] = mesh.normals
+                let _: [Vec2] = mesh.uvs
+                for sub in mesh.submeshes {
+                    let _: [Int32] = sub.indices
+                    let _: Bool = sub.material != .glass
+                    let _: String = sub.material.name
+                }
+            }
+            for room in built.rooms {
+                let _: UUID = room.id
+                let _: String = room.name
+                let _: Double = room.area
+                let _: Vec3 = room.position
+            }
+        }
+        let placements = DollhouseBuilder.placements(for: levels, options: build)
+        let _: Double? = placements[level.id]?.floorHeight
+        for fixture in level.fixtures where PlanGenerator.includeElement(fixture.changeStatus, mode: build.mode) {
+            let extent = FixtureMounting.extent(of: fixture)
+            let _: Double = extent.bottom + extent.height
+            let _: DollhouseTint = DollhouseTint.for(fixture.changeStatus, mode: build.mode)
+        }
+        // SceneStyling: one finish per surface
+        for material in DollhouseMaterial.all {
+            switch material {
+            case .wall, .wallCap, .threshold, .baseboard, .trim, .windowFrame, .ceiling, .doorLeaf,
+                 .hardware, .glass, .windowSill, .fixture, .furniture:
+                break
+            case .floor(let finish):
+                switch finish {
+                case .wood, .tile, .carpet, .concrete, .stone: break
+                }
+            }
+        }
+        // ThreeDViewerScreen: tap info for an opening
+        if let opening = level.walls.flatMap(\.openings).first {
+            let _: String = opening.resolvedStyle.displayName
+            let _: String = formatter.length(opening.sillHeight)
         }
     }
 

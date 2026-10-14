@@ -100,10 +100,18 @@ angled walls are never distorted (§17).
 `PlanGenerator` emits semantic vector primitives (`PlanPrimitive` with
 `PlanPen`s). Renderers map pens per medium: SwiftUI `Canvas` (interactive,
 dark-mode aware), `CGContext` (PDF/PNG/JPG, print style), SVG (classes/colors),
-DXF (layers). One geometry source; identical output everywhere. The 3D
-viewer, the 3D snapshot and `OBJExporter` build from the same walls, rooms
-and fixtures, and `OpeningSchedule` / `ContractorQuantities` read them for
-the schedules and the numbers a bid is written from.
+DXF (layers). One geometry source; identical output everywhere.
+`OpeningSchedule` / `ContractorQuantities` read the same walls, rooms and
+fixtures for the schedules and the numbers a bid is written from.
+
+In 3D the same rule holds one level up: `DollhouseBuilder` (core,
+`ThreeD/`) turns the plan into triangles — joint-resolved walls
+(`WallJoints`), openings with their leaves, frames, glass and trim, floors
+by finish, fixtures at `FixtureMounting` heights — each tagged with a
+`DollhouseMaterial` and a renovation `DollhouseTint`. The SceneKit viewer
+(`DollhouseScene`, `SceneStyling`), the report/export snapshot
+(`ThreeDSnapshot`) and `OBJExporter` all draw that one model; the app only
+decides what each material looks like.
 
 ## Persistence & migration
 
